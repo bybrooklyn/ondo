@@ -403,9 +403,13 @@ button {
 #intro-state.hidden { display: none; }
 
 .intro-icon {
-  font-size: 30px;
   line-height: 1;
-  filter: grayscale(0.3);
+}
+.intro-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: block;
 }
 
 .intro-head {

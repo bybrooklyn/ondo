@@ -87,12 +87,22 @@ crx: validate icons
     KEY="{{ext_dir}}/{{ext_name}}.pem"
     if [[ ! -f "$KEY" ]]; then
         echo "Generating extension key → {{ext_name}}.pem  (keep this file safe — losing it means you can't update the same extension ID)"
-        openssl genrsa -out "$KEY" 2048
+        # genpkey produces PKCS#8 directly — required by Chrome --pack-extension
+        openssl genpkey -algorithm RSA -out "$KEY" -pkeyopt rsa_keygen_bits:2048 2>/dev/null
+    fi
+
+    # ── Chrome requires PKCS#8; convert PKCS#1 keys (openssl genrsa) on the fly ─
+    KEY_FOR_CHROME="$(mktemp /tmp/ondo_pkcs8_XXXXXX.pem)"
+    if head -1 "$KEY" | grep -q "BEGIN RSA PRIVATE KEY"; then
+        echo "Converting key from PKCS#1 → PKCS#8 for Chrome…"
+        openssl pkcs8 -topk8 -nocrypt -in "$KEY" -out "$KEY_FOR_CHROME"
+    else
+        cp "$KEY" "$KEY_FOR_CHROME"
     fi
 
     # ── Stage a clean copy — .pem and dev files must NOT be packed into the crx ──
     STAGING="$(mktemp -d)"
-    trap "rm -rf '$STAGING'" EXIT
+    trap "rm -rf '$STAGING' '$KEY_FOR_CHROME'" EXIT
 
     rsync -a "{{ext_dir}}/" "$STAGING/" \
         --exclude ".pem"     \
@@ -122,8 +132,8 @@ crx: validate icons
 
     "$CHROME" \
         --pack-extension="$STAGING" \
-        --pack-extension-key="$KEY" \
-        --no-message-box 2>/dev/null || true
+        --pack-extension-key="$KEY_FOR_CHROME" \
+        --no-message-box 2>&1 | grep -v "^$" | grep -v "^\[" || true
 
     if [[ -f "$EXPECTED_CRX" ]]; then
         mv "$EXPECTED_CRX" "{{ext_dir}}/{{ext_name}}.crx"

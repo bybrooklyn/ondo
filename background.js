@@ -90,7 +90,23 @@ async function handleScrapeAll(sendResponse) {
         created = result.created;
         console.log(`[Ondo] ${key}: scraping tab ${tab.id} @ ${tab.url}`);
 
-        const data = await executeScrapeFn(tab.id, scrapeFn);
+        let data;
+        try {
+          data = await executeScrapeFn(tab.id, scrapeFn);
+        } catch (injectErr) {
+          // "Cannot access contents of the page" means the tab was open before
+          // the extension was installed/reloaded — Chrome needs a tab reload to
+          // apply host permissions retroactively.
+          if (!created && /cannot access|permission/i.test(injectErr.message)) {
+            console.log(`[Ondo] ${key}: reloading pre-existing tab to apply permissions…`);
+            await chrome.tabs.reload(tab.id);
+            await waitForTabLoad(tab.id);
+            await new Promise(r => setTimeout(r, 2000));
+            data = await executeScrapeFn(tab.id, scrapeFn); // throws if still fails
+          } else {
+            throw injectErr;
+          }
+        }
         console.log(`[Ondo] ${key}: got ${data.length} items`);
 
         if (data.length > 0) {
