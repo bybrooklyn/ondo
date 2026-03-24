@@ -241,15 +241,31 @@ async function handleScrapeAll(sendResponse) {
         try {
           data = await executeScrapeFn(tab.id, scrapeFn);
         } catch (injectErr) {
-          // "Cannot access contents of the page" means the tab was open before
-          // the extension was installed/reloaded — Chrome needs a tab reload to
-          // apply host permissions retroactively.
-          if (!created && /cannot access|permission/i.test(injectErr.message)) {
+          const isPermission = /cannot access|permission/i.test(injectErr.message);
+          const isDiscarded  = /timed out after 30s/i.test(injectErr.message);
+
+          if (isPermission && !created) {
+            // Tab was open before extension install — host permissions not applied yet.
             console.log(`[Ondo] ${key}: reloading pre-existing tab to apply permissions…`);
             await chrome.tabs.reload(tab.id);
             await waitForTabLoad(tab.id);
             await new Promise(r => setTimeout(r, 2000));
             data = await executeScrapeFn(tab.id, scrapeFn); // throws if still fails
+          } else if (isDiscarded) {
+            // Tab was frozen/discarded and wasn't caught by the tab.discarded pre-check
+            // (race between Memory Saver and our check). Reload and retry once.
+            console.log(`[Ondo] ${key}: script injection timed out — reloading discarded tab…`);
+            await chrome.tabs.reload(tab.id);
+            await waitForTabLoad(tab.id);
+            await new Promise(r => setTimeout(r, 2000));
+            try {
+              data = await executeScrapeFn(tab.id, scrapeFn);
+            } catch {
+              // Still unresponsive — give an actionable message instead of raw error
+              throw new Error(
+                `tab is unresponsive even after reload — click the ${key} tab in Chrome once to wake it up, then scan again`
+              );
+            }
           } else {
             throw injectErr;
           }
@@ -421,9 +437,20 @@ async function openOrFindTab(matchFn, defaultUrl) {
 }
 
 // Run a self-contained function in a tab's page context and return its result.
-// chrome.scripting.executeScript has no built-in timeout — on discarded/stuck tabs
-// it can hang indefinitely and block the entire Promise.all scan, so we race it.
+// Two-layer defence against Chrome Memory Saver discarded/frozen tabs:
+//   1. Proactively reload if tab.discarded is true (avoids wasting 30s)
+//   2. Race against a 30s timeout as a safety net for frozen-but-not-flagged tabs
 async function executeScrapeFn(tabId, fn) {
+  // Chrome Memory Saver silently discards inactive tabs. executeScript hangs
+  // forever on a discarded tab — detect it here and reload before injecting.
+  const tabInfo = await chrome.tabs.get(tabId).catch(() => null);
+  if (tabInfo?.discarded) {
+    console.log(`[Ondo] Tab ${tabId} discarded by Memory Saver — reloading before injection`);
+    await chrome.tabs.reload(tabId);
+    await waitForTabLoad(tabId);
+    await new Promise(r => setTimeout(r, 1500)); // SPA hydration pause
+  }
+
   const INJECT_TIMEOUT_MS = 30_000;
 
   let results;
