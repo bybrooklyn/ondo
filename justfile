@@ -21,19 +21,40 @@ build: validate icons zip
     @printf "\033[92m✓ Build complete → %s.zip\033[0m\n" "{{ext_name}}"
 
 # Package as .zip (Chrome Web Store upload or drag-and-drop sideload)
+# Stages a clean temp copy first — guarantees no .pem or dev files leak in.
 zip: validate
-    @rm -f "{{ext_dir}}/{{ext_name}}.zip"
-    cd "{{ext_dir}}" && zip -r "{{ext_name}}.zip" . \
-        --exclude ".git/*" \
-        --exclude ".claude/*" \
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    STAGING="$(mktemp -d)"
+    trap "rm -rf '$STAGING'" EXIT
+
+    rsync -a "{{ext_dir}}/" "$STAGING/" \
+        --exclude ".pem"     \
+        --exclude "*.pem"    \
+        --exclude "*.crx"    \
+        --exclude "*.zip"    \
+        --exclude ".git/"    \
+        --exclude ".claude/" \
         --exclude ".DS_Store" \
-        --exclude "*.zip" \
-        --exclude "*.crx" \
-        --exclude "*.pem" \
         --exclude "justfile" \
-        --exclude "icons/generate_icons.js"
-    @printf "\033[92m✓ Created %s.zip  (%s)\033[0m\n" \
-        "{{ext_name}}" "$(du -sh {{ext_dir}}/{{ext_name}}.zip | cut -f1)"
+        --exclude "Backlog.md" \
+        --exclude "README.md" \
+        --exclude "PRIVACY.md" \
+        --exclude "LICENSE"
+
+    # Abort if pem somehow still crept in
+    if find "$STAGING" -name "*.pem" | grep -q .; then
+        echo "error: .pem file found in staging directory — aborting zip"
+        exit 1
+    fi
+
+    OUT="{{ext_dir}}/{{ext_name}}.zip"
+    rm -f "$OUT"
+    cd "$STAGING" && zip -r "$OUT" .
+
+    printf "\033[92m✓ Created %s.zip  (%s)\033[0m\n" \
+        "{{ext_name}}" "$(du -sh "$OUT" | cut -f1)"
 
 # Pack as .crx using the system Chrome binary
 # Generates ondo.pem (extension private key) on first run — keep it safe!
@@ -69,23 +90,44 @@ crx: validate icons
         openssl genrsa -out "$KEY" 2048
     fi
 
-    # ── Pack ───────────────────────────────────────────────────────────────
-    # Chrome --pack-extension emits <parent-dir>/<ext-dir-name>.crx
-    PARENT="$(dirname "{{ext_dir}}")"
-    EXPECTED_CRX="$PARENT/{{ext_name}}.crx"
+    # ── Stage a clean copy — .pem and dev files must NOT be packed into the crx ──
+    STAGING="$(mktemp -d)"
+    trap "rm -rf '$STAGING'" EXIT
+
+    rsync -a "{{ext_dir}}/" "$STAGING/" \
+        --exclude ".pem"     \
+        --exclude "*.pem"    \
+        --exclude "*.crx"    \
+        --exclude "*.zip"    \
+        --exclude ".git/"    \
+        --exclude ".claude/" \
+        --exclude ".DS_Store" \
+        --exclude "justfile" \
+        --exclude "Backlog.md" \
+        --exclude "README.md" \
+        --exclude "PRIVACY.md" \
+        --exclude "LICENSE"
+
+    # Hard abort if pem somehow still present — private key must never ship
+    if find "$STAGING" -name "*.pem" | grep -q .; then
+        echo "error: .pem file found in staging directory — aborting crx pack"
+        exit 1
+    fi
+
+    # ── Pack from the clean staging dir ───────────────────────────────────
+    # Chrome --pack-extension emits <parent-of-staging>/<staging-dirname>.crx
+    STAGING_PARENT="$(dirname "$STAGING")"
+    STAGING_NAME="$(basename "$STAGING")"
+    EXPECTED_CRX="$STAGING_PARENT/${STAGING_NAME}.crx"
 
     "$CHROME" \
-        --pack-extension="{{ext_dir}}" \
+        --pack-extension="$STAGING" \
         --pack-extension-key="$KEY" \
         --no-message-box 2>/dev/null || true
 
-    # Move output to the extension directory for convenience
     if [[ -f "$EXPECTED_CRX" ]]; then
         mv "$EXPECTED_CRX" "{{ext_dir}}/{{ext_name}}.crx"
         printf "\033[92m✓ Created %s.crx  (%s)\033[0m\n" \
-            "{{ext_name}}" "$(du -sh {{ext_dir}}/{{ext_name}}.crx | cut -f1)"
-    elif [[ -f "{{ext_dir}}/{{ext_name}}.crx" ]]; then
-        printf "\033[92m✓ %s.crx already in place  (%s)\033[0m\n" \
             "{{ext_name}}" "$(du -sh {{ext_dir}}/{{ext_name}}.crx | cut -f1)"
     else
         echo "warning: .crx not found after packing — Chrome may have displayed an error."
@@ -136,9 +178,6 @@ validate:
     check background.js
     check popup.html;    check popup.js;    check popup.css
     check options.html;  check options.js;  check options.css
-    check content/classroom.js
-    check content/outlook.js
-    check content/oncourse.js
     check icons/icon16.png;  check icons/icon32.png
     check icons/icon48.png;  check icons/icon128.png
 
@@ -200,6 +239,13 @@ audit:
 
     if grep -rn 'sk-ant' --include='*.js' . 2>/dev/null; then
         banner "Possible API key literal in source"; ((issues+=1))
+    fi
+
+    # Check .pem is gitignored / would not be included in a zip/crx build
+    if find "{{ext_dir}}" -maxdepth 1 -name "*.pem" | grep -q .; then
+        banner ".pem file found in extension root — ensure it is gitignored and excluded from zip/crx"
+        echo "    Run 'just zip' and 'just crx' to verify staging exclusion is working."
+        ((issues+=1))
     fi
 
     if (( issues == 0 )); then
