@@ -3,6 +3,33 @@
 const OLLAMA_DEFAULT_URL = 'http://localhost:11434';
 const CLAUDE_API_URL     = 'https://api.anthropic.com/v1/messages';
 
+// ── Badge ─────────────────────────────────────────────────────────────────────
+
+function updateBadge(todos) {
+  if (!Array.isArray(todos) || todos.length === 0) {
+    chrome.action.setBadgeText({ text: '' });
+    return;
+  }
+  // Count tasks that need attention: high priority OR due within 7 days
+  const urgent = todos.filter(t =>
+    t.priority === 'high' ||
+    (t.priority === 'medium' && typeof t.daysFromNow === 'number' && t.daysFromNow <= 7)
+  ).length;
+
+  if (urgent === 0) {
+    chrome.action.setBadgeText({ text: '' });
+    return;
+  }
+  chrome.action.setBadgeBackgroundColor({ color: '#f26c6c' }); // --red
+  chrome.action.setBadgeTextColor({ color: '#ffffff' });
+  chrome.action.setBadgeText({ text: urgent > 99 ? '99+' : String(urgent) });
+}
+
+// Restore badge on service worker startup (badge is lost on restart)
+chrome.storage.local.get('lastScan', ({ lastScan }) => {
+  if (lastScan?.todos) updateBadge(lastScan.todos);
+});
+
 // ── Message router ────────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -20,6 +47,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message.action === 'testOpenAI') {
     testOpenAIKey(message.key, message.model, message.baseUrl, sendResponse);
+    return true;
+  }
+  if (message.action === 'clearBadge') {
+    chrome.action.setBadgeText({ text: '' });
+    sendResponse({ success: true });
     return true;
   }
 });
@@ -42,7 +74,8 @@ async function handleScrapeAll(sendResponse) {
   try {
     const settings = await getSettings();
 
-    const allItems = [];
+    // Per-source item buckets (not a flat array — enables per-source caps and filtering)
+    const scraped  = { classroom: [], outlook: [], oncourse: [] };
     const sources  = { classroom: false, outlook: false, oncourse: false };
     const warnings = [];
     const missing  = [];
@@ -61,23 +94,30 @@ async function handleScrapeAll(sendResponse) {
         console.log(`[Ondo] ${key}: got ${data.length} items`);
 
         if (data.length > 0) {
-          allItems.push(...data);
+          scraped[key].push(...data);
           sources[key] = true;
-        } else {
-          // Refresh and retry once — SPA may not have rendered yet
+        } else if (created) {
+          // Tab was opened by us — safe to reload and retry once for SPA render lag
           await chrome.tabs.reload(tab.id);
           await waitForTabLoad(tab.id);
           await new Promise(r => setTimeout(r, 3000));
           const retry = await executeScrapeFn(tab.id, scrapeFn);
           console.log(`[Ondo] ${key}: retry got ${retry.length} items`);
           if (retry.length > 0) {
-            allItems.push(...retry);
+            scraped[key].push(...retry);
             sources[key] = true;
           } else {
-            const tabUrl = (await chrome.tabs.get(tab.id).catch(() => ({url:'?'}))).url;
-            warnings.push(`${key}: 0 items found at ${new URL(tabUrl).pathname}`);
+            const tabUrl = (await chrome.tabs.get(tab.id).catch(() => ({ url: '' }))).url;
+            const path = (() => { try { return new URL(tabUrl).pathname; } catch { return tabUrl || key; } })();
+            warnings.push(`${key}: 0 items found at ${path} — are you logged in?`);
             sources[key] = true;
           }
+        } else {
+          // User's existing tab — never reload it; just report empty
+          const tabUrl = (await chrome.tabs.get(tab.id).catch(() => ({ url: '' }))).url;
+          const path = (() => { try { return new URL(tabUrl).pathname; } catch { return tabUrl || key; } })();
+          warnings.push(`${key}: 0 items on ${path} — try navigating to the assignments/inbox page`);
+          sources[key] = true;
         }
       } catch (e) {
         if (e.message === 'NO_TAB') {
@@ -100,14 +140,41 @@ async function handleScrapeAll(sendResponse) {
       scrapeSource('oncourse', isOnCourse, onCourseScrapeFn, null),
     ]);
 
+    // ── Post-scrape processing ─────────────────────────────────────────────
+
+    // Apply configurable Outlook cap (scraper already sorted by relevance score)
+    const outlookCap = settings.outlookCap || 15;
+    if (scraped.outlook.length > outlookCap) {
+      console.log(`[Ondo] Capping Outlook from ${scraped.outlook.length} to ${outlookCap}`);
+      scraped.outlook = scraped.outlook.slice(0, outlookCap);
+    }
+
+    // Smart Filter: AI pre-filter for Outlook + OnCourse (skip Classroom — already structured)
+    if (settings.smartFilter && (scraped.outlook.length > 0 || scraped.oncourse.length > 0)) {
+      try {
+        console.log('[Ondo] Running smart filter…');
+        const filtered = await runSmartFilter(scraped, settings);
+        if (Array.isArray(filtered.outlook))  scraped.outlook  = filtered.outlook;
+        if (Array.isArray(filtered.oncourse)) scraped.oncourse = filtered.oncourse;
+        console.log(`[Ondo] Smart filter: outlook ${scraped.outlook.length}, oncourse ${scraped.oncourse.length}`);
+      } catch (e) {
+        console.warn('[Ondo] Smart filter failed:', e.message);
+        warnings.push(`Smart filter error: ${e.message} — using unfiltered data`);
+      }
+    }
+
+    // Merge: Classroom first (highest signal), OnCourse second, Outlook last
+    const allItems = [...scraped.classroom, ...scraped.oncourse, ...scraped.outlook];
+
     if (allItems.length === 0) {
       let msg;
-      if (missing.length === 3) {
-        msg = 'No matching tabs found. Open Outlook or OnCourse in a tab, then scan.';
+      // Classroom auto-opens so it never ends up in `missing`; only outlook/oncourse can
+      if (missing.includes('outlook') && missing.includes('oncourse') && !warnings.length) {
+        msg = 'No Outlook or OnCourse tab found. Open one in Chrome, then scan.';
       } else {
         const detail = warnings.length > 0
           ? '\n\n' + warnings.map(w => '• ' + w).join('\n')
-          : '\n\nMake sure you are logged in to each service.';
+          : '\n\nMake sure you are logged in and on the assignments/inbox page.';
         msg = 'Nothing was scraped from your open pages.' + detail;
       }
       sendResponse({ success: false, error: msg, missing, sources, warnings });
@@ -129,8 +196,9 @@ async function handleScrapeAll(sendResponse) {
     }
 
     await chrome.storage.local.set({
-      lastScan: { todos: result.items, sources, warnings, ts: Date.now() },
+      lastScan: { todos: result.items, sources, warnings, ts: Date.now(), model: activeModel(settings) },
     });
+    updateBadge(result.items);
 
     sendResponse({
       success:  true,
@@ -183,7 +251,7 @@ async function openOrFindTab(matchFn, defaultUrl) {
   const loaded = await chrome.tabs.get(tab.id).catch(() => null);
   const finalUrl = loaded?.url || '';
   if (finalUrl.includes('accounts.google.com') || finalUrl.includes('/signin') || finalUrl.includes('/login')) {
-    throw new Error(`classroom: redirected to login — please open Classroom in Chrome and sign in first`);
+    throw new Error(`redirected to a login page — please open the site in Chrome and sign in first`);
   }
 
   return { tab, created: true };
@@ -270,8 +338,9 @@ function classroomScrapeFn() {
   };
 
   // ── Strategy 1: any link whose href looks like a Classroom assignment ─────
-  // Patterns: /c/COURSE/a/ASSIGN, /c/COURSE/d/DOC, /c/COURSE/q/QUIZ, /c/COURSE/mc/MATERIAL
-  const ASSIGN_RE = /classroom\.google\.com\/(?:u\/\d+\/)?c\/[^/]+\/[adqm][ac]?\/[^/?#]+/;
+  // Patterns: /c/COURSE/a/ASSIGN, /c/COURSE/d/DOC, /c/COURSE/q/QUIZ, /c/COURSE/mc/MATERIAL,
+  //           /c/COURSE/sa/ID (student submission), /c/COURSE/p/ID (post)
+  const ASSIGN_RE = /classroom\.google\.com\/(?:u\/\d+\/)?c\/[^/]+\/(?:[adqmp][ac]?|sa)\/[^/?#]+/;
   document.querySelectorAll('a[href]').forEach(anchor => {
     try {
       const href = anchor.href || '';
@@ -345,16 +414,35 @@ function outlookScrapeFn() {
   const seenUrls   = new Set();
   const seenTitles = new Set();
 
-  const SCHOOL_KW = [
-    'assignment','homework','due','submit','submission','deadline',
-    'exam','quiz','test','midterm','final','grade','graded','grades',
-    'course','class','lecture','syllabus','teacher','professor',
-    'instructor','school','college','university','semester','quarter',
-    'canvas','classroom','oncourse','blackboard','moodle','lms',
-    'missing work','late work','extra credit','office hours',
-    'study','project','essay','report','presentation','lab',
+  // ── Weighted scoring for school-relevance ────────────────────────────────
+  // Higher score = more likely to be a real school item.
+  // Threshold of 4 eliminates most false positives (e.g. "COVID test results" = 1 point).
+  const SCORE_MAP = [
+    [5, ['assignment','homework','due date','submit by','submission deadline',
+         'syllabus','graded','missing work','late work','extra credit',
+         'rubric','plagiarism','turnitin','gradebook']],
+    [3, ['course','professor','instructor','lecturer','lecture','semester','quarter',
+         'canvas','classroom','oncourse','blackboard','moodle','brightspace','lms',
+         'office hours','tutorial','recitation','ta ','teaching assistant']],
+    [1, ['class','test','quiz','exam','grade','grades','project','essay',
+         'report','presentation','lab','study','school','college','university',
+         'midterm','final','teacher']],
   ];
-  const isSchool = text => { const l = text.toLowerCase(); return SCHOOL_KW.some(k => l.includes(k)); };
+
+  const schoolScore = (subject, sender, snippet) => {
+    const text = `${subject} ${sender} ${snippet}`.toLowerCase();
+    let score = 0;
+    for (const [weight, keywords] of SCORE_MAP) {
+      for (const k of keywords) if (text.includes(k)) score += weight;
+    }
+    // .edu sender domain → very strong signal
+    if (/\.edu\b/i.test(sender)) score += 4;
+    // Course code pattern in subject: [CS 201], MATH-151, BIO 101, etc.
+    if (/\b[A-Z]{2,5}[\s\-]?\d{3,4}\b/.test(subject)) score += 2;
+    return score;
+  };
+
+  const SCORE_THRESHOLD = 4;
 
   const buildUrl = convId => {
     const h = window.location.hostname;
@@ -363,15 +451,33 @@ function outlookScrapeFn() {
     return `${window.location.origin}/mail/inbox/id/${encodeURIComponent(convId)}`;
   };
 
-  const add = item => {
+  const add = (item, score) => {
     if (!item?.title || item.title.length < 2) return;
     const urlKey = item.url && item.url !== window.location.href ? item.url : null;
     if (urlKey && seenUrls.has(urlKey)) return;
     if (!urlKey && seenTitles.has(item.title)) return;
     if (urlKey) seenUrls.add(urlKey);
     else seenTitles.add(item.title);
-    items.push(item);
+    items.push({ ...item, _score: score });
   };
+
+  // ── Strategy 0: Outlook 2024+ redesign ───────────────────────────────────
+  document.querySelectorAll('[data-app-section="ConversationListItem"],[class*="ms-List-cell"][aria-label]').forEach(row => {
+    try {
+      const ariaLabel = row.getAttribute('aria-label') || '';
+      const subjectEl = row.querySelector('[class*="subject"],[class*="Subject"],[aria-label*="subject"]');
+      const subject   = subjectEl?.textContent.trim() || ariaLabel.split(',')[0]?.trim() || '';
+      if (!subject || subject.length < 3) return;
+      const sender    = row.querySelector('[class*="sender"],[class*="Sender"],[class*="from"],[class*="From"]')?.textContent.trim() || '';
+      const snippet   = row.querySelector('[class*="preview"],[class*="Preview"],[class*="body"],[class*="Body"]')?.textContent.trim() || '';
+      const score     = schoolScore(subject, sender, snippet);
+      if (score < SCORE_THRESHOLD) return;
+      const convId    = row.getAttribute('data-convid') || row.getAttribute('data-item-id') || '';
+      const dateEl    = row.querySelector('time,[class*="time"],[class*="Time"],[class*="date"],[class*="Date"]');
+      const date      = dateEl?.getAttribute('datetime') || dateEl?.textContent.trim() || '';
+      add({ title: subject, sender, date, snippet: snippet.slice(0,150), url: buildUrl(convId), source: 'outlook', type: 'email' }, score);
+    } catch {}
+  });
 
   // ── Strategy 1: [role="option"] / [role="listitem"] rows ─────────────────
   document.querySelectorAll('[role="option"][aria-label],[role="listitem"][aria-label]').forEach(row => {
@@ -383,10 +489,11 @@ function outlookScrapeFn() {
       if (!subject || subject.length < 3) return;
       const sender    = row.querySelector('[data-testid="sender-name"],.afn,.EO4Vs')?.textContent.trim() || '';
       const snippet   = row.querySelector('[data-testid="email-preview"],.bodypreview')?.textContent.trim() || '';
-      if (!isSchool(`${subject} ${sender} ${snippet}`)) return;
+      const score     = schoolScore(subject, sender, snippet);
+      if (score < SCORE_THRESHOLD) return;
       const dateEl    = row.querySelector('[data-testid="received-time"],time');
       const date      = dateEl?.getAttribute('datetime') || dateEl?.textContent.trim() || '';
-      add({ title: subject, sender, date, snippet: snippet.slice(0,150), url: buildUrl(convId), source: 'outlook', type: 'email' });
+      add({ title: subject, sender, date, snippet: snippet.slice(0,150), url: buildUrl(convId), source: 'outlook', type: 'email' }, score);
     } catch {}
   });
 
@@ -398,9 +505,10 @@ function outlookScrapeFn() {
       const subject   = subjectEl?.textContent.trim() || '';
       if (!subject || subject.length < 3) return;
       const sender    = row.querySelector('.iGSJe,.o6oGW,td[class*="from"]')?.textContent.trim() || '';
-      if (!isSchool(`${subject} ${sender}`)) return;
+      const score     = schoolScore(subject, sender, '');
+      if (score < SCORE_THRESHOLD) return;
       const date      = row.querySelector('time,td[class*="date"],.tA')?.textContent.trim() || '';
-      add({ title: subject, sender, date, url: buildUrl(convId), source: 'outlook', type: 'email' });
+      add({ title: subject, sender, date, url: buildUrl(convId), source: 'outlook', type: 'email' }, score);
     } catch {}
   });
 
@@ -410,15 +518,20 @@ function outlookScrapeFn() {
     if (pane) {
       const subjectEl = pane.querySelector('h1,[data-testid="message-subject"],[role="heading"],.aqY,.hq');
       const subject   = subjectEl?.textContent.trim() || '';
-      if (subject.length >= 3 && isSchool(`${subject} ${pane.textContent}`)) {
-        add({ title: subject, url: window.location.href, source: 'outlook', type: 'email_open' });
+      if (subject.length >= 3) {
+        const score = schoolScore(subject, '', pane.textContent?.slice(0, 500) || '');
+        if (score >= SCORE_THRESHOLD) {
+          add({ title: subject, url: window.location.href, source: 'outlook', type: 'email_open' }, score);
+        }
       }
     }
   } catch {}
 
-  return items;
+  // Sort by relevance score (highest first) — real cap applied by orchestrator
+  items.sort((a, b) => (b._score || 0) - (a._score || 0));
+  console.log('[Ondo/outlook] found', items.length, 'school-relevant items on', window.location.href);
+  return items.slice(0, 25);
 }
-
 function onCourseScrapeFn() {
   const items = [];
   const seen  = new Set();
@@ -521,6 +634,8 @@ function getSettings() {
       openaiApiKey:  '',
       openaiModel:   'gpt-4o-mini',
       openaiBaseUrl: 'https://api.openai.com/v1',
+      smartFilter:   false,
+      outlookCap:    15,
     }, resolve);
   });
 }
@@ -533,9 +648,13 @@ function normalizeItems(rawItems) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  return rawItems
+  // Date pattern — only keep Outlook hints that contain deadline-relevant info
+  const DATE_HINT_RE = /due|by|before|deadline|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}\/\d{1,2}/i;
+
+  const SOURCE_PRIORITY = { Classroom: 0, OnCourse: 1, Outlook: 2 };
+
+  const mapped = rawItems
     .filter(item => item?.title && String(item.title).trim().length > 1)
-    .slice(0, 80) // cap to avoid token overflow
     .map(item => {
       const source = SOURCE_MAP[(item.source || '').toLowerCase()] ?? 'Classroom';
 
@@ -546,6 +665,11 @@ function normalizeItems(rawItems) {
       // Pre-compute days-until-due so the AI doesn't have to do date arithmetic
       const daysFromNow = computeDaysFromNow(item.dueDate, today);
 
+      // For Outlook items, only keep hint if it contains a date/deadline
+      // (saves tokens — most email previews are useless filler)
+      const snippet = item.snippet || '';
+      const keepHint = source !== 'Outlook' || DATE_HINT_RE.test(snippet);
+
       const out = {
         title: String(item.title).trim().slice(0, 150),
         source,
@@ -554,10 +678,22 @@ function normalizeItems(rawItems) {
         ...(daysFromNow !== null ? { daysFromNow }                    : {}),
         // Optional context hints (compressed)
         ...(item.courseName ? { course: String(item.courseName).slice(0, 40) } : {}),
-        ...(item.snippet    ? { hint:   String(item.snippet).slice(0, 80)    } : {}),
+        ...(keepHint && snippet ? { hint: String(snippet).slice(0, 80) } : {}),
       };
       return out;
     });
+
+  // Sort: Classroom first (structured assignments), OnCourse second, Outlook last (noisiest)
+  // Within each source, sort by urgency (daysFromNow ascending, nulls/unknowns last)
+  mapped.sort((a, b) => {
+    const sp = (SOURCE_PRIORITY[a.source] ?? 2) - (SOURCE_PRIORITY[b.source] ?? 2);
+    if (sp !== 0) return sp;
+    const da = a.daysFromNow ?? 9999;
+    const db = b.daysFromNow ?? 9999;
+    return da - db;
+  });
+
+  return mapped.slice(0, 80); // cap to avoid token overflow
 }
 
 function computeDaysFromNow(rawDate, today) {
@@ -608,41 +744,175 @@ function computeDaysFromNow(rawDate, today) {
   return null;
 }
 
+// ── Smart Filter (optional AI pre-filter) ─────────────────────────────────────
+// Runs each non-Classroom source through a lightweight AI call to strip noise
+// before the main assignment-generation prompt. Off by default.
+
+function trimForFilter(item) {
+  // Send only the fields the AI needs to make a filtering decision — minimise tokens
+  const out = { title: item.title, source: item.source };
+  if (item.sender)     out.sender   = item.sender;
+  if (item.date)       out.date     = item.date;
+  if (item.dueDate)    out.dueDate  = item.dueDate;
+  if (item.snippet)    out.snippet  = String(item.snippet).slice(0, 100);
+  if (item.url)        out.url      = item.url;
+  if (item.courseName) out.course   = item.courseName;
+  if (item.type)       out.type     = item.type;
+  return out;
+}
+
+function buildFilterPrompt(scraped) {
+  const data = {};
+  if (scraped.outlook?.length  > 0) data.outlook  = scraped.outlook.map(trimForFilter);
+  if (scraped.oncourse?.length > 0) data.oncourse = scraped.oncourse.map(trimForFilter);
+
+  const system = 'You are a data filter for a school task tracker. Output ONLY valid JSON. No prose, no markdown, no explanation.';
+
+  const user =
+`Filter the scraped data below. Keep ONLY items that are actual, actionable school tasks — assignments, homework, quizzes, exams, projects, or emails about specific deadlines the student must act on.
+
+REMOVE:
+- Newsletters, announcements, or promotional emails
+- Completed, graded, submitted, or returned work
+- General school info with no specific deadline or action
+- Non-school content (personal emails, spam, social notifications)
+- Duplicates (keep the one with more info)
+
+Return a JSON object with the same keys as the input. Each key maps to an array of surviving items with ALL original fields preserved unchanged. If every item in a source was removed, use an empty array.
+
+Example: {"outlook": [...surviving items...], "oncourse": [...surviving items...]}
+
+DATA:
+${JSON.stringify(data, null, 1)}`;
+
+  return { system, user };
+}
+
+async function callAIRaw(prompt, settings) {
+  if (settings.provider === 'claude')  return callClaude(prompt, settings,  { raw: true });
+  if (settings.provider === 'openai')  return callOpenAI(prompt, settings,  { raw: true });
+  return callOllama(prompt, settings, { raw: true });
+}
+
+async function runSmartFilter(scraped, settings) {
+  const prompt  = buildFilterPrompt(scraped);
+  const rawText = await callAIRaw(prompt, settings);
+
+  // Parse the filter response — expect { outlook: [...], oncourse: [...] }
+  let s = rawText.trim();
+  // Strip thinking tags (qwen3)
+  s = s.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  s = s.replace(/<think>[\s\S]*/gi, '').trim();
+  // Strip markdown fences
+  s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+
+  const objStart = s.indexOf('{');
+  const objEnd   = s.lastIndexOf('}');
+  if (objStart === -1 || objEnd === -1) {
+    throw new Error('Filter returned non-JSON output');
+  }
+
+  const obj = JSON.parse(s.slice(objStart, objEnd + 1));
+
+  // Map filtered items back to original scraped items by URL/title to preserve all fields
+  // (the AI may have stripped internal fields like _score)
+  const mapBack = (filtered, originals) => {
+    if (!Array.isArray(filtered)) return originals;
+    const origMap = new Map();
+    for (const item of originals) {
+      const key = item.url || item.title;
+      if (!origMap.has(key)) origMap.set(key, item);
+    }
+    // Return original items that match filtered titles/urls
+    return filtered.reduce((acc, f) => {
+      const key = f.url || f.title;
+      const orig = origMap.get(key);
+      if (orig) acc.push(orig);
+      else acc.push(f); // AI kept it but we can't map back — use as-is
+      return acc;
+    }, []);
+  };
+
+  return {
+    outlook:  mapBack(obj.outlook,  scraped.outlook  || []),
+    oncourse: mapBack(obj.oncourse, scraped.oncourse || []),
+  };
+}
+
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
-function buildPrompt(rawItems) {
+function buildPrompt(rawItems, provider = 'ollama') {
   const todayStr = new Date().toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
 
   const items = normalizeItems(rawItems);
 
-  // System message: short, authoritative, disables qwen3 thinking via /no_think
-  const system =
-    'You are a JSON extraction tool. Output ONLY a JSON array with no prose, no markdown, ' +
-    'no explanation. The first character of your response must be [ and the last must be ]. /no_think';
+  // OpenAI's response_format:json_object requires an object at the top level — not a bare array.
+  // Ollama/Claude can return either form; the parser handles both.
+  const isOpenAI = provider === 'openai';
 
-  // User message: schema + rules + compact data
+  // System message: short and authoritative.
+  // /no_think is appended in callOllama only (Ollama-specific directive).
+  const system = isOpenAI
+    ? 'You are a JSON extraction tool. Output ONLY a JSON object with a single key "todos" ' +
+      'whose value is an array of task objects. No prose, no markdown, no explanation.'
+    : 'You are a JSON extraction tool. Output ONLY a JSON array of task objects. ' +
+      'No prose, no markdown, no explanation.';
+
+  // User message: clear schema, explicit field-by-field guidance, then data.
   const user =
 `Today: ${todayStr}
 
-Convert the school task data below into a JSON array. Each element must be:
-{"title":string,"source":"Classroom"|"Outlook"|"OnCourse","dueDate":string|null,"url":string,"priority":"high"|"medium"|"low","notes":string}
+You have school task data scraped from websites. Convert it to ${isOpenAI ? '{"todos":[...]}' : 'a JSON array'}.
 
-Priority rules — use the daysFromNow field if present:
-  "high"   → daysFromNow < 0 (overdue) OR daysFromNow 0/1/2, OR title contains "missing"/"overdue"
-  "medium" → daysFromNow 3-7
-  "low"    → daysFromNow > 7 OR no due date and no urgency signal
+Each output item must have this exact shape:
+{
+  "title":    string,                              // clean task name (trim noise)
+  "source":   "Classroom" | "Outlook" | "OnCourse",
+  "dueDate":  string | null,                       // human-readable date (see rules below)
+  "url":      string,                              // copy from input url exactly; "#" if absent
+  "priority": "high" | "medium" | "low",           // see rules below
+  "notes":    string                               // extra context (see rules below); "" if nothing
+}
 
-Extra rules:
-- Skip items already submitted / complete / graded / returned
-- For Outlook items, skip non-school emails; extract deadlines from email subject/hint
-- Deduplicate by title; prefer items with a specific URL over generic ones
-- url must start with http — use "#" only if no URL exists
-- Output NOTHING outside the JSON array
+INPUT FIELD GUIDE — each input item may contain:
+  title       → use as-is for output title (clean up "Missing:" or "[LATE]" prefixes if present)
+  source      → copy to output source unchanged
+  url         → copy to output url EXACTLY — do not modify or reconstruct
+  dueDate     → raw date text; copy to output dueDate
+  daysFromNow → integer days until due (negative = overdue). PRIMARY signal for priority & dueDate.
+  course      → class/course name (Classroom items) → put in output notes
+  hint        → email body snippet (Outlook items) → extract deadline or action and put in notes
+
+PRIORITY RULES (prefer daysFromNow when present):
+  "high"   → daysFromNow ≤ 2  OR  daysFromNow < 0 (overdue)  OR  title contains "missing"/"overdue"/"late"
+  "medium" → daysFromNow 3–7
+  "low"    → daysFromNow > 7  OR  no due date and no urgency signal
+  For Outlook items with no daysFromNow: scan hint for date words (today/tomorrow/Monday…Sunday/
+  "due [date]"/"by [date]") relative to today's date above, and infer priority accordingly.
+
+DUEDATE RULES:
+  - Copy dueDate from input if present
+  - If dueDate absent: daysFromNow < 0 → "Overdue", daysFromNow=0 → "Today", daysFromNow=1 → "Tomorrow"
+  - If dueDate absent and no daysFromNow: try to extract a date from the hint field if one exists
+  - Otherwise null — never invent a date
+
+NOTES RULES:
+  - Classroom: put the course name (from "course" field) e.g. "AP Calculus"
+  - Outlook: extract the key action/deadline from the "hint" field e.g. "Submit by Friday 11:59 PM"
+  - OnCourse: leave "" unless hint or course provides useful context
+  - Max ~80 characters; omit filler like "Please", "Reminder:", "FYI"
+
+FILTER RULES:
+  - Skip items already submitted / complete / graded / returned / closed
+  - Skip Outlook items that have no school context (no deadline, no assignment/course reference)
+  - Deduplicate: if two items have the same title, keep only the one with a real URL (not "#")
+
+OUTPUT NOTHING outside the JSON ${isOpenAI ? 'object' : 'array'}.
 
 DATA:
-${JSON.stringify(items)}`;
+${JSON.stringify(items, null, 1)}`;
 
   return { system, user };
 }
@@ -650,7 +920,7 @@ ${JSON.stringify(items)}`;
 // ── AI dispatch ───────────────────────────────────────────────────────────────
 
 async function processWithAI(items, settings) {
-  const prompt = buildPrompt(items);
+  const prompt = buildPrompt(items, settings.provider);
   if (settings.provider === 'claude')  return callClaude(prompt, settings);
   if (settings.provider === 'openai')  return callOpenAI(prompt, settings);
   return callOllama(prompt, settings);
@@ -664,7 +934,7 @@ function activeModel(settings) {
 
 // ── Ollama ────────────────────────────────────────────────────────────────────
 
-async function callOllama(prompt, settings) {
+async function callOllama(prompt, settings, opts) {
   const base  = (settings.ollamaUrl || OLLAMA_DEFAULT_URL).replace(/\/$/, '');
   const model = (settings.ollamaModel || 'qwen3:4b').trim();
 
@@ -675,7 +945,8 @@ async function callOllama(prompt, settings) {
   const body = {
     model,
     messages: [
-      { role: 'system', content: prompt.system },
+      // Append /no_think to system content here (Ollama-only directive; ignored by Claude/OpenAI)
+      { role: 'system', content: prompt.system + ' /no_think' },
       { role: 'user',   content: prompt.user   },
     ],
     // format: "json" constrains Ollama to emit valid JSON.
@@ -718,6 +989,7 @@ async function callOllama(prompt, settings) {
 
   const data = await res.json();
   const text = data.message?.content ?? data.response ?? '';
+  if (opts?.raw) return text;
   return parseAndValidateAI(text, model);
 }
 
@@ -757,7 +1029,7 @@ function ollamaError(code, message) {
 
 // ── Claude ────────────────────────────────────────────────────────────────────
 
-async function callClaude(prompt, settings) {
+async function callClaude(prompt, settings, opts) {
   if (!settings.claudeApiKey) {
     throw new Error('Claude API key not set. Open Options → add your key.');
   }
@@ -765,9 +1037,10 @@ async function callClaude(prompt, settings) {
   const res = await fetch(CLAUDE_API_URL, {
     method:  'POST',
     headers: {
-      'Content-Type':      'application/json',
-      'x-api-key':         settings.claudeApiKey,
-      'anthropic-version': '2023-06-01',
+      'Content-Type':                            'application/json',
+      'x-api-key':                               settings.claudeApiKey,
+      'anthropic-version':                       '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
       model:      settings.claudeModel || 'claude-haiku-4-5-20251001',
@@ -784,19 +1057,35 @@ async function callClaude(prompt, settings) {
 
   const data = await res.json();
   const text = data.content?.[0]?.text ?? '';
+  if (opts?.raw) return text;
   return parseAndValidateAI(text, 'claude');
 }
 
 // ── OpenAI-compatible API ─────────────────────────────────────────────────────
 // Works with: api.openai.com, LM Studio, LocalAI, Ollama /v1, Jan, etc.
 
-async function callOpenAI(prompt, settings) {
+async function callOpenAI(prompt, settings, opts) {
   if (!settings.openaiApiKey) {
     throw new Error('OpenAI API key not set. Open Options → add your key.');
   }
 
   const base  = (settings.openaiBaseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
   const model = (settings.openaiModel  || 'gpt-4o-mini').trim();
+
+  // o1/o3/o4 reasoning models don't support response_format or temperature
+  const isReasoning = /^o[134][-\s]/i.test(model) || model === 'o1' || model === 'o3';
+
+  const reqBody = {
+    model,
+    messages: [
+      { role: 'system', content: prompt.system },
+      { role: 'user',   content: prompt.user   },
+    ],
+    ...(isReasoning ? {} : {
+      temperature:     0,
+      response_format: { type: 'json_object' }, // structured JSON output (non-reasoning only)
+    }),
+  };
 
   let res;
   try {
@@ -806,15 +1095,7 @@ async function callOpenAI(prompt, settings) {
         'Content-Type':  'application/json',
         'Authorization': `Bearer ${settings.openaiApiKey}`,
       },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: prompt.system },
-          { role: 'user',   content: prompt.user   },
-        ],
-        temperature:     0,
-        response_format: { type: 'json_object' }, // structured JSON output
-      }),
+      body: JSON.stringify(reqBody),
     });
   } catch (e) {
     throw new Error(`Cannot reach OpenAI endpoint at ${base}. Check your base URL and network.`);
@@ -827,6 +1108,7 @@ async function callOpenAI(prompt, settings) {
 
   const data = await res.json();
   const text = data.choices?.[0]?.message?.content ?? '';
+  if (opts?.raw) return text;
   return parseAndValidateAI(text, model);
 }
 
@@ -845,9 +1127,18 @@ async function testOpenAIKey(key, model, baseUrl, sendResponse) {
         messages:   [{ role: 'user', content: 'Say: ok' }],
       }),
     });
-    sendResponse({ success: res.ok, error: res.ok ? null : `HTTP ${res.status}` });
+    if (res.ok) {
+      sendResponse({ success: true });
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      const errMsg  = errData.error?.message
+        || (res.status === 401 ? 'Invalid API key'
+          : res.status === 403 ? 'Access denied — check key permissions'
+          : `HTTP ${res.status}`);
+      sendResponse({ success: false, error: errMsg });
+    }
   } catch (e) {
-    sendResponse({ success: false, error: e.message });
+    sendResponse({ success: false, error: `Cannot reach ${(baseUrl||'').replace(/\/$/, '') || 'endpoint'}. Check Base URL and network.` });
   }
 }
 
@@ -856,9 +1147,10 @@ async function testClaudeKey(key, model, sendResponse) {
     const res = await fetch(CLAUDE_API_URL, {
       method:  'POST',
       headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         key,
-        'anthropic-version': '2023-06-01',
+        'Content-Type':                            'application/json',
+        'x-api-key':                               key,
+        'anthropic-version':                       '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify({
         model:      model || 'claude-haiku-4-5-20251001',
@@ -866,9 +1158,18 @@ async function testClaudeKey(key, model, sendResponse) {
         messages:   [{ role: 'user', content: 'Reply with the single word: ok' }],
       }),
     });
-    sendResponse({ success: res.ok, error: res.ok ? null : `HTTP ${res.status}` });
+    if (res.ok) {
+      sendResponse({ success: true });
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      const errMsg  = errData.error?.message
+        || (res.status === 401 ? 'Invalid API key'
+          : res.status === 403 ? 'Access denied — check key permissions'
+          : `HTTP ${res.status}`);
+      sendResponse({ success: false, error: errMsg });
+    }
   } catch (e) {
-    sendResponse({ success: false, error: e.message });
+    sendResponse({ success: false, error: 'Cannot reach Anthropic API. Check network.' });
   }
 }
 
@@ -920,7 +1221,7 @@ function parseAndValidateAI(text, modelHint = '') {
   if (objStart !== -1 && objEnd !== -1) {
     try {
       const obj = JSON.parse(s.slice(objStart, objEnd + 1));
-      const arr = obj.items ?? obj.tasks ?? obj.todos ?? obj.assignments ?? obj.data ?? null;
+      const arr = obj.todos ?? obj.items ?? obj.tasks ?? obj.assignments ?? obj.data ?? null;
       if (Array.isArray(arr)) {
         return { items: sanitizeItems(arr), parseError: null, rawText };
       }

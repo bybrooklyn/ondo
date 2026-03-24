@@ -1,5 +1,6 @@
 /* ── Reset ──────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+.hidden { display: none !important; }
 
 /* ── Design tokens ───────────────────────────────────────────────────────────── */
 :root {
@@ -575,12 +576,4 @@ footer {
 }
 .btn-copy:hover { background: var(--lime-dim); }
 
-.btn-load-cache {
-  font-size: 10px;
-  background: transparent;
-  color: var(--teal);
-  border: 1px solid rgba(52,217,195,.25);
-  padding: 2px 8px;
-  border-radius: var(--r-sm);
-}
-.btn-load-cache:hover { background: var(--teal-dim); }
+

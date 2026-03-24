@@ -149,6 +149,38 @@
     </div>
   </div>
 
+  <!-- ── Advanced ──────────────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-label">Advanced</div>
+
+    <div class="adv-row">
+      <label class="toggle-row" for="smart-filter-toggle">
+        <div class="toggle-info">
+          <div class="toggle-name">Smart Filter</div>
+          <div class="toggle-desc">
+            Run scraped data through AI pre-filtering before generating tasks.
+            More accurate but uses ~2-3× more tokens per scan.
+          </div>
+          <div class="toggle-warn">
+            ⚠ Recommended with Claude, GPT-4o-mini, or qwen3:8b+.
+            Smaller models may produce errors or drop items.
+          </div>
+        </div>
+        <input type="checkbox" id="smart-filter-toggle" />
+        <span class="toggle-switch"></span>
+      </label>
+    </div>
+
+    <div class="field" style="margin-top:12px">
+      <div class="field-label">Outlook Email Cap</div>
+      <input type="number" id="outlook-cap" min="1" max="50" value="15" style="width:80px" />
+      <div class="field-hint">
+        Max Outlook emails sent to AI per scan. Higher = more coverage but noisier.
+        Emails are ranked by school-relevance; the top N are kept.
+      </div>
+    </div>
+  </div>
+
   <hr />
 
   <div class="save-bar">

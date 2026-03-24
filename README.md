@@ -2,7 +2,7 @@
 
 **AI-powered task radar for students.** Ondo scrapes your Google Classroom, Outlook, and OnCourse tabs, sends the data to a local or cloud AI, and returns a clean prioritized to-do list with direct links — all in one click.
 
-![Ondo popup showing task list with priority stripes](https://raw.githubusercontent.com/bybrooklyn/ondo/main/icons/icon128.png)
+![Ondo icon](https://raw.githubusercontent.com/bybrooklyn/ondo/main/icons/icon128.png)
 
 ---
 
@@ -10,10 +10,15 @@
 
 - **Unified task list** — Classroom assignments, school emails, and OnCourse work in one place
 - **AI prioritization** — ranks tasks by due date, flags overdue and missing work
+- **Badge count** — icon shows the number of urgent tasks at a glance; clears when you open the popup
+- **Intelligent Outlook filtering** — scored keyword system filters noise (newsletters, spam) before sending to AI
+- **Smart Filter** *(optional)* — extra AI pre-filter pass for Outlook + OnCourse; strips non-assignments before the main prompt
 - **Local-first** — defaults to [Ollama](https://ollama.com) running on your machine; nothing leaves your device
-- **Claude fallback** — optionally use Anthropic's Claude API with your own key
-- **Auto-opens Classroom** — if no Classroom tab is open, Ondo opens the to-do page in the background, scrapes it, and closes it
+- **Cloud AI options** — Anthropic Claude or OpenAI (GPT-4o, o4-mini, GPT-4.1) with your own key
+- **OpenAI-compatible** — any local server with a `/v1` endpoint works (LM Studio, LocalAI, Jan, Ollama shim)
+- **Auto-opens Classroom** — if no Classroom tab is open, Ondo opens the to-do page in the background, scrapes, and closes it
 - **Cached results** — last scan shown instantly on open, even offline
+- **Copy to clipboard** — copy all tasks as a Markdown checklist grouped by priority
 - **Dark terminal UI** — lime/teal/amber on black, monospace font
 
 ---
@@ -32,7 +37,7 @@
 
 - Chrome (or any Chromium browser)
 - **For local AI:** [Ollama](https://ollama.com) running with `qwen3:4b` pulled
-- **For cloud AI:** An [Anthropic API key](https://console.anthropic.com)
+- **For cloud AI:** An [Anthropic API key](https://console.anthropic.com) or [OpenAI API key](https://platform.openai.com)
 
 ---
 
@@ -87,6 +92,15 @@ just zip     # zip for Chrome Web Store upload
 4. Choose a model (Haiku 4.5 is fast and cheap; Sonnet 4.6 for better results)
 5. Save and scan
 
+### Option C — OpenAI / compatible API
+
+1. Open Ondo's **Options** (gear icon)
+2. Select **OpenAI** as the provider
+3. Paste your [OpenAI API key](https://platform.openai.com) (or any API key for compatible servers)
+4. Optionally set a custom **Base URL** for LM Studio (`http://localhost:1234/v1`), LocalAI, Jan, or Ollama's OpenAI shim
+5. Choose a model (e.g. `gpt-4o-mini`, `gpt-4.1`, `o4-mini`)
+6. Save and scan
+
 ---
 
 ## Usage
@@ -96,6 +110,7 @@ just zip     # zip for Chrome Web Store upload
 3. Click **Scan**
 4. Ondo opens Classroom in the background, reads all three sources, and returns a prioritized list
 5. Click any task title to open it directly
+6. Use **⎘ Copy** to copy tasks as a Markdown checklist
 
 ### Priority colors
 
@@ -111,10 +126,15 @@ just zip     # zip for Chrome Web Store upload
 
 | Setting | Default | Description |
 |---|---|---|
-| AI Provider | Ollama | Local (Ollama) or cloud (Claude) |
+| AI Provider | Ollama | Local (Ollama), Claude, or OpenAI |
 | Ollama URL | `http://localhost:11434` | Base URL for your Ollama instance |
 | Ollama Model | `qwen3:4b` | Any model pulled in Ollama |
 | Claude Model | `claude-haiku-4-5-20251001` | Haiku, Sonnet, or Opus |
+| OpenAI Key | — | API key for OpenAI or compatible service |
+| OpenAI Base URL | `https://api.openai.com/v1` | Override for LM Studio, LocalAI, etc. |
+| OpenAI Model | `gpt-4o-mini` | Any model supported by the endpoint |
+| Smart Filter | Off | AI pre-filter pass for Outlook + OnCourse before main prompt |
+| Outlook Email Cap | 15 | Max emails sent to AI per scan (ranked by school-relevance) |
 
 ---
 
@@ -135,11 +155,14 @@ To persist across restarts, add `OLLAMA_ORIGINS=*` to your shell profile (`~/.zs
 ### "AI returned unusable output"
 The model produced malformed JSON. Try switching to `qwen3:4b` or `gemma3:4b` in Options, or make sure the model is fully downloaded.
 
+### Smart Filter errors
+Smart Filter requires a capable model. Use Claude Haiku, GPT-4o-mini, or at minimum `qwen3:8b` locally. Small models (< 4B params) may drop valid tasks or return malformed JSON.
+
 ---
 
 ## Privacy
 
-Ondo collects nothing. All data stays on your device or goes to the AI service you configure yourself (your Ollama instance or your Claude API account). See [PRIVACY.md](./PRIVACY.md) for the full policy.
+Ondo collects nothing. All data stays on your device or goes to the AI service you configure yourself (your Ollama instance or your API account). See [PRIVACY.md](./PRIVACY.md) for the full policy.
 
 ---
 
@@ -157,18 +180,14 @@ just clean      # remove build artifacts
 ```
 ondo/
 ├── manifest.json          # MV3 manifest
-├── background.js          # service worker: scraping orchestration + AI calls
+├── background.js          # service worker: scraping, AI calls, badge
 ├── popup.html/js/css      # extension popup UI
 ├── options.html/js/css    # settings page
-├── content/
-│   ├── classroom.js       # (reference) Classroom DOM selectors
-│   ├── outlook.js         # (reference) Outlook DOM selectors
-│   └── oncourse.js        # (reference) OnCourse DOM selectors
 ├── icons/
-│   ├── generate_icons.js  # zero-dep PNG icon generator
 │   └── icon{16,32,48,128}.png
 ├── justfile               # build recipes
-└── PRIVACY.md
+├── PRIVACY.md
+└── Backlog.md             # planned features
 ```
 
 ---

@@ -28,6 +28,8 @@ const installedSection = document.getElementById('installed-section');
 const installedList    = document.getElementById('installed-list');
 const installedEmpty   = document.getElementById('installed-empty');
 const corsFixBox       = document.getElementById('cors-fix');
+const smartFilterToggle = document.getElementById('smart-filter-toggle');
+const outlookCapInput   = document.getElementById('outlook-cap');
 
 let activeProvider = 'ollama';
 
@@ -42,14 +44,18 @@ chrome.storage.sync.get({
   openaiApiKey:  '',
   openaiModel:   'gpt-4o-mini',
   openaiBaseUrl: 'https://api.openai.com/v1',
+  smartFilter:   false,
+  outlookCap:    15,
 }, s => {
-  ollamaUrl.value      = s.ollamaUrl;
-  ollamaModel.value    = s.ollamaModel;
-  claudeKey.value      = s.claudeApiKey;
-  claudeModel.value    = s.claudeModel;
-  openaiKey.value      = s.openaiApiKey;
-  openaiModel.value    = s.openaiModel;
-  openaiBaseUrl.value  = s.openaiBaseUrl;
+  ollamaUrl.value            = s.ollamaUrl;
+  ollamaModel.value          = s.ollamaModel;
+  claudeKey.value             = s.claudeApiKey;
+  claudeModel.value           = s.claudeModel;
+  openaiKey.value             = s.openaiApiKey;
+  openaiModel.value           = s.openaiModel;
+  openaiBaseUrl.value         = s.openaiBaseUrl;
+  smartFilterToggle.checked   = s.smartFilter;
+  outlookCapInput.value       = s.outlookCap;
   setProvider(s.provider || 'ollama');
   syncPresets('ollama-presets', ollamaModel.value);
   syncPresets('claude-presets', claudeModel.value);
@@ -157,8 +163,9 @@ function renderInstalledModels(models) {
     row.dataset.model = m.name;
 
     const sizeStr   = m.size   ? fmtBytes(m.size) : '';
-    const paramsStr = m.details?.parameter_size ?? '';
-    const quantStr  = m.details?.quantization_level ?? '';
+    // Handle both raw API shape (m.details.*) and mapped shape from testOllama (m.params/m.quant)
+    const paramsStr = m.params ?? m.details?.parameter_size      ?? '';
+    const quantStr  = m.quant  ?? m.details?.quantization_level  ?? '';
     const meta      = [paramsStr, quantStr, sizeStr].filter(Boolean).join(' · ');
 
     const info = document.createElement('div');
@@ -326,6 +333,8 @@ btnSave.addEventListener('click', () => {
     openaiApiKey:  openaiKey.value.trim(),
     openaiModel:   openaiModel.value.trim()    || 'gpt-4o-mini',
     openaiBaseUrl: openaiBaseUrl.value.trim()  || 'https://api.openai.com/v1',
+    smartFilter:   smartFilterToggle.checked,
+    outlookCap:    Math.max(1, Math.min(50, parseInt(outlookCapInput.value, 10) || 15)),
   };
 
   chrome.storage.sync.set(settings, () => {
@@ -337,9 +346,10 @@ btnSave.addEventListener('click', () => {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function setChip(el, state, text) {
-  el.textContent = text;
-  el.className   = 'test-chip';
+  el.textContent  = text;
+  el.className    = 'test-chip';
+  el.style.display = 'flex'; // always visible when called; CSS classes control color
   if (state === 'ok')       el.classList.add('ok');
   else if (state === 'err') el.classList.add('err');
-  else                      el.style.display = 'flex';
+  // else: 'testing' — neutral style, display already set above
 }

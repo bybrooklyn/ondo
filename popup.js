@@ -19,15 +19,17 @@ const errorText   = document.getElementById('error-text');
 const errorFix      = document.getElementById('error-fix');
 const errorParseFix = document.getElementById('error-parse-fix');
 const footerLeft    = document.getElementById('footer-left');
-const btnCached     = document.getElementById('btn-cached');
 const btnCopy       = document.getElementById('btn-copy');
 
-// ── Init: show cached results immediately ─────────────────────────────────────
+// ── Init: show cached results + clear badge when popup opens ──────────────────
 
 (async () => {
+  // Clear the badge — user has seen their tasks
+  chrome.runtime.sendMessage({ action: 'clearBadge' });
+
   const cached = await getCached();
   if (cached?.todos?.length > 0) {
-    render(cached.todos, cached.sources, cached.ts, null, cached.warnings, /*stale=*/true);
+    render(cached.todos, cached.sources, cached.ts, null, cached.warnings, /*stale=*/true, cached.model);
   }
   // else: intro state is visible by default
 })();
@@ -162,7 +164,6 @@ function render(todos, sources, ts, rawCount, warnings, stale = false, model = n
     footerLeft.appendChild(m);
   }
 
-  btnCached.style.display = 'none';
   btnCopy.classList.remove('hidden');
 }
 

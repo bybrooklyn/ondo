@@ -103,7 +103,7 @@ body {
 /* ── Provider cards ──────────────────────────────────────────────────────────── */
 .provider-cards {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 8px;
   margin-bottom: 16px;
 }
@@ -286,6 +286,81 @@ input::placeholder { color: var(--dim); opacity: 0.5; }
 }
 .btn-save:hover  { background: #c8f55a; box-shadow: 0 0 14px rgba(180,240,66,.22); }
 .btn-save:active { background: #9cd433; }
+
+/* ── Toggle switch ─────────────────────────────────────────────────────────── */
+
+.toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  cursor: pointer;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--bg-1);
+}
+.toggle-row:hover { border-color: var(--border-2); }
+
+.toggle-info { flex: 1; }
+
+.toggle-name {
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.04em;
+}
+.toggle-desc {
+  font-family: var(--font);
+  font-size: 10px;
+  color: var(--text-2);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.toggle-warn {
+  font-family: var(--font);
+  font-size: 9px;
+  color: var(--amber);
+  margin-top: 6px;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
+.toggle-row input[type="checkbox"] {
+  display: none;
+}
+.toggle-switch {
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+  position: relative;
+  transition: background 0.15s, border-color 0.15s;
+  margin-top: 2px;
+}
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--dim);
+  border-radius: 50%;
+  transition: transform 0.15s, background 0.15s;
+}
+.toggle-row input:checked + .toggle-switch {
+  background: var(--lime-dim);
+  border-color: var(--lime);
+}
+.toggle-row input:checked + .toggle-switch::after {
+  transform: translateX(16px);
+  background: var(--lime);
+}
+
+.adv-row { margin-bottom: 6px; }
 
 /* ── Save toast ──────────────────────────────────────────────────────────────── */
 #save-toast {

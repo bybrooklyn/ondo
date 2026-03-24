@@ -15,6 +15,9 @@
     "http://localhost:11434/*",
     "http://localhost:1234/*",
     "http://localhost:8080/*",
+    "http://127.0.0.1:11434/*",
+    "http://127.0.0.1:1234/*",
+    "http://127.0.0.1:8080/*",
     "https://api.anthropic.com/*",
     "https://api.openai.com/*"
   ],
