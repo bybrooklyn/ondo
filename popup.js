@@ -8,7 +8,6 @@ const loadingBar  = document.getElementById('loading-bar');
 const loadingProg = document.getElementById('loading-progress');
 const statusStrip = document.getElementById('status-strip');
 const statusText  = document.getElementById('status-text');
-const statusStep  = document.getElementById('status-step');
 const sourceBar   = document.getElementById('source-bar');
 const taskList    = document.getElementById('task-list');
 const introState  = document.getElementById('intro-state');
@@ -24,14 +23,45 @@ const btnCopy       = document.getElementById('btn-copy');
 // ── Init: show cached results + clear badge when popup opens ──────────────────
 
 (async () => {
-  // Clear the badge — user has seen their tasks
   chrome.runtime.sendMessage({ action: 'clearBadge' });
 
+  // Pre-load cached results so they're ready whichever path runs below
   const cached = await getCached();
-  if (cached?.todos?.length > 0) {
-    render(cached.todos, cached.sources, cached.ts, null, cached.warnings, /*stale=*/true, cached.model);
-  }
-  // else: intro state is visible by default
+
+  // Watch for background scan completion (handles normal scan + popup-reopened-mid-scan)
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.lastScan) return;
+    if (cancelRequested) return; // user cancelled this popup's scan — ignore
+    const scan = changes.lastScan.newValue;
+    if (!scan) return;
+    scanInFlight = false;
+    setProgress(1);
+    setTimeout(() => {
+      render(scan.todos, scan.sources, scan.ts, null, scan.warnings, false, scan.model);
+    }, 280);
+  });
+
+  // Check if a scan is already running from a previous popup instance
+  chrome.runtime.sendMessage({ action: 'getScanState' }, state => {
+    if (chrome.runtime.lastError) {
+      // Extension context error — just show cached results
+      if (cached?.todos?.length > 0) {
+        render(cached.todos, cached.sources, cached.ts, null, cached.warnings, true, cached.model);
+      }
+      return;
+    }
+    if (state?.inProgress) {
+      // Scan already running — show scanning UI and wait for storage update
+      scanInFlight = true;
+      setState('loading');
+    } else {
+      // No active scan — show cached results if any
+      if (cached?.todos?.length > 0) {
+        render(cached.todos, cached.sources, cached.ts, null, cached.warnings, true, cached.model);
+      }
+      // else: intro state is visible by default
+    }
+  });
 })();
 
 // ── Events ────────────────────────────────────────────────────────────────────
@@ -44,11 +74,26 @@ btnCopy.addEventListener('click', copyTasks);
 
 // Step messages — will be filtered down to only tabs that are actually open
 const ALL_STEPS = ['Reading Classroom…', 'Reading Outlook…', 'Reading OnCourse…', 'Thinking with AI…'];
-let scanInFlight = false;
+let scanInFlight    = false;
+let cancelRequested = false;
 
 async function runScan() {
-  if (scanInFlight) return;
-  scanInFlight = true;
+  // While scanning, the button acts as a cancel
+  if (scanInFlight) {
+    cancelRequested = true;
+    scanInFlight    = false;
+    // Restore whatever was last rendered, or go back to intro
+    const cached = await getCached();
+    if (cached?.todos?.length > 0) {
+      render(cached.todos, cached.sources, cached.ts, null, cached.warnings, true, cached.model);
+    } else {
+      setState();
+    }
+    return;
+  }
+
+  scanInFlight    = true;
+  cancelRequested = false;
 
   setState('loading');
   setProgress(0.04);
@@ -64,9 +109,11 @@ async function runScan() {
 
   chrome.runtime.sendMessage({ action: 'scrapeAll' }, response => {
     clearInterval(stepTimer);
-    setProgress(1);
     scanInFlight = false;
 
+    if (cancelRequested) return; // user cancelled — storage listener will handle render if scan finishes
+
+    setProgress(1);
     setTimeout(() => {
       if (chrome.runtime.lastError) {
         setState('error', chrome.runtime.lastError.message);
@@ -222,6 +269,10 @@ function copyTasks() {
     const orig = btnCopy.textContent;
     btnCopy.textContent = '✓ Copied';
     setTimeout(() => { btnCopy.textContent = orig; }, 1500);
+  }).catch(() => {
+    const orig = btnCopy.textContent;
+    btnCopy.textContent = '✗ Failed';
+    setTimeout(() => { btnCopy.textContent = orig; }, 1500);
   });
 }
 
@@ -236,9 +287,8 @@ function setState(state, msg, errorCode) {
 
   switch (state) {
     case 'loading':
-      btnScan.disabled       = true;
-      btnScan.textContent    = '…';
-      statusStep.textContent = '';
+      btnScan.disabled    = false;   // keep clickable — acts as cancel
+      btnScan.textContent = '× Cancel';
       show(loadingBar);
       show(statusStrip);
       break;

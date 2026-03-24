@@ -140,8 +140,15 @@ async function loadInstalledModels(baseUrl) {
     renderInstalledModels(models);
     populateDatalist(models);
   } catch (_) {
-    // Ollama not running — silently skip, user will see error when they test
+    // Ollama not running or CORS blocked — show a subtle hint in the installed list
     renderInstalledModels([]);
+    if (installedSection && !installedSection.classList.contains('hidden')) return;
+    // Show the section with a dim "not reachable" note so user knows why list is empty
+    if (installedEmpty) {
+      installedSection?.classList.remove('hidden');
+      installedEmpty.style.display = '';
+      installedEmpty.textContent   = 'Ollama not reachable — run "ollama serve" then refresh';
+    }
   }
 }
 

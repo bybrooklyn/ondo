@@ -30,11 +30,22 @@ chrome.storage.local.get('lastScan', ({ lastScan }) => {
   if (lastScan?.todos) updateBadge(lastScan.todos);
 });
 
+// ── Scan state ─────────────────────────────────────────────────────────────────
+// Tracked so a re-opened popup can pick up an in-progress scan
+let scanInProgress = false;
+
 // ── Message router ────────────────────────────────────────────────────────────
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Only accept messages from this extension's own pages (popup, options)
+  if (sender.id !== chrome.runtime.id) return;
+
   if (message.action === 'scrapeAll') {
     handleScrapeAll(sendResponse);
+    return true;
+  }
+  if (message.action === 'getScanState') {
+    sendResponse({ inProgress: scanInProgress });
     return true;
   }
   if (message.action === 'testOllama') {
@@ -70,7 +81,35 @@ const isOnCourse  = url => ['oncourse.cc', 'oncourseconnect.com', 'oncourse.iu.e
 
 // ── Main orchestrator ─────────────────────────────────────────────────────────
 
+const SCAN_TIMEOUT_MS = 120_000; // 2 minutes — hard cap so the popup never hangs forever
+
 async function handleScrapeAll(sendResponse) {
+  // Guard: only one scan at a time
+  if (scanInProgress) {
+    sendResponse({ success: false, error: 'A scan is already in progress.', errorCode: 'SCAN_IN_PROGRESS' });
+    return;
+  }
+
+  // Wrap sendResponse so we can never call it twice (timeout + normal path)
+  let responded = false;
+  const timeoutId = setTimeout(() => {
+    respond({
+      success:   false,
+      error:     'Scan timed out after 2 minutes. Your school pages may be loading slowly — try reloading them first.',
+      errorCode: 'SCAN_TIMEOUT',
+    });
+  }, SCAN_TIMEOUT_MS);
+
+  const respond = data => {
+    if (responded) return;
+    responded = true;
+    clearTimeout(timeoutId);
+    scanInProgress = false;
+    sendResponse(data);
+  };
+
+  scanInProgress = true;
+
   try {
     const settings = await getSettings();
 
@@ -88,6 +127,17 @@ async function handleScrapeAll(sendResponse) {
         const result = await openOrFindTab(matchFn, defaultUrl);
         tab     = result.tab;
         created = result.created;
+
+        // For existing tabs: check if they're on a login page before trying to inject
+        if (!created) {
+          const currentUrl = (await chrome.tabs.get(tab.id).catch(() => ({ url: '' }))).url || '';
+          if (/accounts\.google\.com|\/signin|\/login/i.test(currentUrl)) {
+            warnings.push(`${key}: tab is on a login page — please sign in to ${key} and scan again`);
+            sources[key] = true;
+            return;
+          }
+        }
+
         console.log(`[Ondo] ${key}: scraping tab ${tab.id} @ ${tab.url}`);
 
         let data;
@@ -193,14 +243,14 @@ async function handleScrapeAll(sendResponse) {
           : '\n\nMake sure you are logged in and on the assignments/inbox page.';
         msg = 'Nothing was scraped from your open pages.' + detail;
       }
-      sendResponse({ success: false, error: msg, missing, sources, warnings });
+      respond({ success: false, error: msg, missing, sources, warnings });
       return;
     }
 
     const result = await processWithAI(allItems, settings);
 
     if (result.parseError && result.items.length === 0) {
-      sendResponse({
+      respond({
         success:   false,
         error:     `AI returned unusable output: ${result.parseError}`,
         errorCode: 'AI_PARSE_ERROR',
@@ -216,7 +266,7 @@ async function handleScrapeAll(sendResponse) {
     });
     updateBadge(result.items);
 
-    sendResponse({
+    respond({
       success:  true,
       todos:    result.items,
       sources,
@@ -226,7 +276,7 @@ async function handleScrapeAll(sendResponse) {
       provider: settings.provider,
     });
   } catch (err) {
-    sendResponse({ success: false, error: err.message, errorCode: err.code ?? null });
+    respond({ success: false, error: err.message, errorCode: err.code ?? null });
   }
 }
 
@@ -277,11 +327,18 @@ async function openOrFindTab(matchFn, defaultUrl) {
 async function executeScrapeFn(tabId, fn) {
   try {
     const results = await chrome.scripting.executeScript({ target: { tabId }, func: fn });
-    const result = results?.[0]?.result;
     if (results?.[0]?.error) {
-      console.error('[Ondo] executeScript page error:', results[0].error);
+      // Scraper threw inside the page context (not an inject permission error)
+      // Log for debugging but treat as empty — not a fatal injection failure
+      console.warn('[Ondo] Scraper threw in page context (0 items):', results[0].error);
+      return [];
     }
-    return Array.isArray(result) ? result : [];
+    const result = results?.[0]?.result;
+    if (!Array.isArray(result)) {
+      console.warn('[Ondo] Scraper returned non-array:', typeof result, '— treating as 0 items');
+      return [];
+    }
+    return result;
   } catch (e) {
     console.error('[Ondo] executeScript inject error:', e.message);
     throw new Error(`Script injection failed: ${e.message}`);
@@ -709,7 +766,21 @@ function normalizeItems(rawItems) {
     return da - db;
   });
 
-  return mapped.slice(0, 80); // cap to avoid token overflow
+  // Hard item cap, then a token-budget check (~4 chars per token, 6k token data budget)
+  const capped = mapped.slice(0, 80);
+  const TOKEN_BUDGET_CHARS = 6_000 * 4; // ~6k tokens
+  let totalChars = 0;
+  const budgeted = [];
+  for (const item of capped) {
+    const sz = JSON.stringify(item).length;
+    if (totalChars + sz > TOKEN_BUDGET_CHARS && budgeted.length >= 10) break;
+    totalChars += sz;
+    budgeted.push(item);
+  }
+  if (budgeted.length < capped.length) {
+    console.warn(`[Ondo] Token budget: trimmed ${capped.length} → ${budgeted.length} items`);
+  }
+  return budgeted;
 }
 
 function computeDaysFromNow(rawDate, today) {
@@ -1262,9 +1333,13 @@ function sanitizeItems(arr) {
     const url = typeof item.url === 'string' && /^https?:\/\//.test(item.url)
       ? item.url : '#';
 
+    const resolvedSource = VALID_SOURCES.has(item.source) ? item.source : guessSource(item);
+    if (!VALID_SOURCES.has(item.source)) {
+      console.warn('[Ondo] AI returned unknown source:', item.source, '→ guessed', resolvedSource);
+    }
     acc.push({
       title,
-      source:   VALID_SOURCES.has(item.source)   ? item.source   : guessSource(item),
+      source:   resolvedSource,
       dueDate:  item.dueDate ? String(item.dueDate).trim().slice(0, 60) : null,
       url,
       priority: VALID_PRIORITY.has(item.priority) ? item.priority : 'low',
