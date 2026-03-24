@@ -176,7 +176,7 @@ const isOnCourse  = url => ['oncourse.cc', 'oncourseconnect.com', 'oncourse.iu.e
 
 // ── Main orchestrator ─────────────────────────────────────────────────────────
 
-const SCAN_TIMEOUT_MS = 240_000; // 4 minutes — Chrome SW max is ~5 min; Ollama on CPU can be slow
+const SCAN_TIMEOUT_MS = 300_000; // 5 minutes — Chrome SW hard max; Ollama on CPU can be slow
 
 async function handleScrapeAll(sendResponse) {
   // Guard: only one scan at a time
@@ -190,7 +190,7 @@ async function handleScrapeAll(sendResponse) {
   const timeoutId = setTimeout(() => {
     respond({
       success:   false,
-      error:     'Scan timed out after 4 minutes.\n\n• If using Ollama: the model may be slow on CPU — try qwen3:4b if you haven\'t already\n• Try reloading your school pages before scanning\n• Check that Ollama is running: ollama serve',
+      error:     'Scan timed out after 5 minutes.\n\n• If using Ollama: the model may be slow on CPU — try qwen3:4b if you haven\'t already\n• Try reloading your school pages before scanning\n• Check that Ollama is running: ollama serve',
       errorCode: 'SCAN_TIMEOUT',
     });
   }, SCAN_TIMEOUT_MS);
