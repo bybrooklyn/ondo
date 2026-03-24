@@ -28,10 +28,13 @@ const installedSection = document.getElementById('installed-section');
 const installedList    = document.getElementById('installed-list');
 const installedEmpty   = document.getElementById('installed-empty');
 const corsFixBox       = document.getElementById('cors-fix');
-const smartFilterToggle = document.getElementById('smart-filter-toggle');
-const outlookCapInput   = document.getElementById('outlook-cap');
+const smartFilterToggle    = document.getElementById('smart-filter-toggle');
+const outlookCapInput      = document.getElementById('outlook-cap');
+const autoscanSeg          = document.getElementById('autoscan-seg');
+const notificationsToggle  = document.getElementById('notifications-toggle');
 
-let activeProvider = 'ollama';
+let activeProvider    = 'ollama';
+let activeAutoScan    = 'off';
 
 // ── Load saved settings + auto-fetch models ───────────────────────────────────
 
@@ -44,8 +47,10 @@ chrome.storage.sync.get({
   openaiApiKey:  '',
   openaiModel:   'gpt-4o-mini',
   openaiBaseUrl: 'https://api.openai.com/v1',
-  smartFilter:   false,
-  outlookCap:    15,
+  smartFilter:       false,
+  outlookCap:        15,
+  autoScanInterval:  'off',
+  notifications:     false,
 }, s => {
   ollamaUrl.value            = s.ollamaUrl;
   ollamaModel.value          = s.ollamaModel;
@@ -56,6 +61,8 @@ chrome.storage.sync.get({
   openaiBaseUrl.value         = s.openaiBaseUrl;
   smartFilterToggle.checked   = s.smartFilter;
   outlookCapInput.value       = s.outlookCap;
+  notificationsToggle.checked = s.notifications;
+  setAutoScan(s.autoScanInterval || 'off');
   setProvider(s.provider || 'ollama');
   syncPresets('ollama-presets', ollamaModel.value);
   syncPresets('claude-presets', claudeModel.value);
@@ -64,6 +71,20 @@ chrome.storage.sync.get({
   if ((s.provider || 'ollama') === 'ollama') {
     loadInstalledModels(s.ollamaUrl || 'http://localhost:11434');
   }
+});
+
+// ── Auto-scan interval toggle ─────────────────────────────────────────────────
+
+function setAutoScan(val) {
+  activeAutoScan = val;
+  autoscanSeg?.querySelectorAll('.seg').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.val === val);
+  });
+}
+
+autoscanSeg?.addEventListener('click', e => {
+  const btn = e.target.closest('.seg');
+  if (btn) setAutoScan(btn.dataset.val);
 });
 
 // ── Provider toggle ───────────────────────────────────────────────────────────
@@ -340,11 +361,15 @@ btnSave.addEventListener('click', () => {
     openaiApiKey:  openaiKey.value.trim(),
     openaiModel:   openaiModel.value.trim()    || 'gpt-4o-mini',
     openaiBaseUrl: openaiBaseUrl.value.trim()  || 'https://api.openai.com/v1',
-    smartFilter:   smartFilterToggle.checked,
-    outlookCap:    Math.max(1, Math.min(50, parseInt(outlookCapInput.value, 10) || 15)),
+    smartFilter:       smartFilterToggle.checked,
+    outlookCap:        Math.max(1, Math.min(50, parseInt(outlookCapInput.value, 10) || 15)),
+    autoScanInterval:  activeAutoScan,
+    notifications:     notificationsToggle.checked,
   };
 
   chrome.storage.sync.set(settings, () => {
+    // Tell the background to reschedule the alarm with the new interval
+    chrome.runtime.sendMessage({ action: 'rescheduleAutoScan' });
     saveToast.classList.add('show');
     setTimeout(() => saveToast.classList.remove('show'), 2000);
   });

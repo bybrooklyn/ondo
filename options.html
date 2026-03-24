@@ -181,6 +181,37 @@
     </div>
   </div>
 
+  <!-- ── Automation ───────────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-label">Automation</div>
+
+    <div class="adv-row">
+      <div class="field-label" style="margin-bottom:6px">Auto-scan interval</div>
+      <div class="seg-group" id="autoscan-seg">
+        <button class="seg active" data-val="off">Off</button>
+        <button class="seg"        data-val="30">30 min</button>
+        <button class="seg"        data-val="60">1 hr</button>
+        <button class="seg"        data-val="180">3 hr</button>
+      </div>
+      <div class="field-hint" style="margin-top:6px">
+        Silently re-scan in the background and update your badge. The popup does not open.
+      </div>
+    </div>
+
+    <div class="adv-row" style="margin-top:14px">
+      <label class="toggle-row" for="notifications-toggle">
+        <div class="toggle-info">
+          <div class="toggle-name">Urgent task notifications</div>
+          <div class="toggle-desc">
+            Show a Chrome notification when a new high-priority task is detected during auto-scan.
+          </div>
+        </div>
+        <input type="checkbox" id="notifications-toggle" />
+        <span class="toggle-switch"></span>
+      </label>
+    </div>
+  </div>
+
   <hr />
 
   <div class="save-bar">

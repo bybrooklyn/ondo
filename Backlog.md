@@ -4,7 +4,7 @@ Planned features in rough priority order. Items marked **🔥** are high-impact 
 
 ---
 
-## 🔥 Auto-scan on interval (#6)
+## ✅ Auto-scan on interval (#6) — shipped
 
 **What:** A background alarm (Chrome `alarms` API) that re-runs the scrape + AI pipeline on a configurable interval (e.g. every 30 or 60 minutes), without the user needing to open the popup.
 
@@ -20,7 +20,7 @@ Planned features in rough priority order. Items marked **🔥** are high-impact 
 
 ---
 
-## 🔥 Notifications (#7)
+## ✅ Notifications (#7) — shipped
 
 **What:** Chrome notifications (`notifications` permission) when urgent tasks appear or something becomes overdue.
 
@@ -118,4 +118,4 @@ Planned features in rough priority order. Items marked **🔥** are high-impact 
 
 ---
 
-*Last updated: 2026-03-24*
+*Last updated: 2026-03-24 — #6 and #7 shipped*

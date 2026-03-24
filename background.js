@@ -34,6 +34,97 @@ chrome.storage.local.get('lastScan', ({ lastScan }) => {
 // Tracked so a re-opened popup can pick up an in-progress scan
 let scanInProgress = false;
 
+// ── Auto-scan (alarms) ─────────────────────────────────────────────────────────
+
+const ALARM_NAME = 'ondo-autoscan';
+
+// Called on extension install and whenever auto-scan settings change
+async function scheduleAutoScan() {
+  await chrome.alarms.clear(ALARM_NAME);
+  const settings = await getSettings();
+  if (!settings.autoScanInterval || settings.autoScanInterval === 'off') return;
+  const minutes = parseInt(settings.autoScanInterval, 10);
+  if (!minutes || minutes < 1) return;
+  chrome.alarms.create(ALARM_NAME, { periodInMinutes: minutes });
+  console.log(`[Ondo] Auto-scan scheduled every ${minutes} min`);
+}
+
+chrome.alarms.onAlarm.addListener(async alarm => {
+  if (alarm.name !== ALARM_NAME) return;
+  const settings = await getSettings();
+  // Don't run if already scanning or no provider configured
+  if (scanInProgress) return;
+  if (settings.provider === 'ollama'  && !settings.ollamaModel) return;
+  if (settings.provider === 'claude'  && !settings.claudeApiKey) return;
+  if (settings.provider === 'openai'  && !settings.openaiApiKey) return;
+
+  console.log('[Ondo] Auto-scan triggered');
+
+  // Run silently — no popup interaction
+  handleScrapeAll(result => {
+    if (!result?.success || !result.todos) return;
+    if (settings.notifications) maybeNotify(result.todos, settings);
+  });
+});
+
+// On install/update, schedule auto-scan if configured
+chrome.runtime.onInstalled.addListener(() => scheduleAutoScan());
+
+// ── Notifications ──────────────────────────────────────────────────────────────
+
+async function maybeNotify(newTodos, settings) {
+  if (!settings.notifications) return;
+  if (!Array.isArray(newTodos) || newTodos.length === 0) return;
+
+  // Load previous scan to diff against
+  const { lastNotified } = await chrome.storage.local.get('lastNotified');
+  const prevIds = new Set(lastNotified?.ids || []);
+
+  // Find newly urgent tasks (high priority + not seen before)
+  const urgent = newTodos.filter(t =>
+    t.priority === 'high' && !prevIds.has(taskId(t))
+  );
+
+  // Persist current high-priority IDs so we don't re-notify
+  await chrome.storage.local.set({
+    lastNotified: { ids: newTodos.filter(t => t.priority === 'high').map(taskId), ts: Date.now() },
+  });
+
+  if (urgent.length === 0) return;
+
+  const title = urgent.length === 1
+    ? `Due soon: ${urgent[0].title}`
+    : `${urgent.length} urgent tasks due soon`;
+
+  const body = urgent.length === 1
+    ? [urgent[0].dueDate ? `Due: ${urgent[0].dueDate}` : '', urgent[0].source].filter(Boolean).join(' · ')
+    : urgent.slice(0, 3).map(t => `• ${t.title}`).join('\n');
+
+  chrome.notifications.create(`ondo-${Date.now()}`, {
+    type:    'basic',
+    iconUrl: 'icons/icon128.png',
+    title,
+    message: body || 'Open Ondo to review.',
+    buttons: [{ title: 'Open Ondo' }],
+  });
+}
+
+// Clicking the notification or its button opens the popup
+chrome.notifications.onButtonClicked.addListener((notifId) => {
+  if (!notifId.startsWith('ondo-')) return;
+  chrome.action.openPopup?.().catch(() => {});
+  chrome.notifications.clear(notifId);
+});
+chrome.notifications.onClicked.addListener(notifId => {
+  if (!notifId.startsWith('ondo-')) return;
+  chrome.action.openPopup?.().catch(() => {});
+  chrome.notifications.clear(notifId);
+});
+
+function taskId(t) {
+  return `${t.source}::${t.title}::${t.dueDate ?? ''}`;
+}
+
 // ── Message router ────────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -63,6 +154,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'clearBadge') {
     chrome.action.setBadgeText({ text: '' });
     sendResponse({ success: true });
+    return true;
+  }
+  if (message.action === 'rescheduleAutoScan') {
+    scheduleAutoScan().then(() => sendResponse({ success: true }));
     return true;
   }
 });
@@ -707,8 +802,10 @@ function getSettings() {
       openaiApiKey:  '',
       openaiModel:   'gpt-4o-mini',
       openaiBaseUrl: 'https://api.openai.com/v1',
-      smartFilter:   false,
-      outlookCap:    15,
+      smartFilter:       false,
+      outlookCap:        15,
+      autoScanInterval:  'off',  // 'off' | '30' | '60' | '180' (minutes)
+      notifications:     false,
     }, resolve);
   });
 }

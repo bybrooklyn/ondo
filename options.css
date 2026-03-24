@@ -362,6 +362,31 @@ input::placeholder { color: var(--dim); opacity: 0.5; }
 
 .adv-row { margin-bottom: 6px; }
 
+/* ── Segmented button group (auto-scan interval) ─────────────────────────────── */
+.seg-group {
+  display: flex;
+  gap: 4px;
+}
+.seg {
+  flex: 1;
+  padding: 6px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--dim);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.seg:hover { border-color: var(--border-2); color: var(--text); }
+.seg.active {
+  background: var(--lime-dim);
+  border-color: var(--lime);
+  color: var(--lime);
+  font-weight: 600;
+}
+
 /* ── Save toast ──────────────────────────────────────────────────────────────── */
 #save-toast {
   position: fixed;

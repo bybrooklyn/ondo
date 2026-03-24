@@ -3,7 +3,7 @@
   "name": "Ondo",
   "version": "1.0.0",
   "description": "AI-powered task aggregator for OnCourse, Google Classroom, and Outlook",
-  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "alarms", "notifications"],
   "host_permissions": [
     "https://classroom.google.com/*",
     "https://outlook.live.com/*",
