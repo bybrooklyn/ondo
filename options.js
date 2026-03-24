@@ -4,17 +4,24 @@
 
 const btnOllama        = document.getElementById('btn-ollama');
 const btnClaude        = document.getElementById('btn-claude');
+const btnOpenAI        = document.getElementById('btn-openai');
 const ollamaConfig     = document.getElementById('ollama-config');
 const claudeConfig     = document.getElementById('claude-config');
+const openaiConfig     = document.getElementById('openai-config');
 const ollamaUrl        = document.getElementById('ollama-url');
 const ollamaModel      = document.getElementById('ollama-model');
 const ollamaDatalist   = document.getElementById('ollama-model-datalist');
 const claudeKey        = document.getElementById('claude-key');
 const claudeModel      = document.getElementById('claude-model');
+const openaiKey        = document.getElementById('openai-key');
+const openaiBaseUrl    = document.getElementById('openai-base-url');
+const openaiModel      = document.getElementById('openai-model');
 const btnTestOllama    = document.getElementById('btn-test-ollama');
 const btnTestClaude    = document.getElementById('btn-test-claude');
+const btnTestOpenAI    = document.getElementById('btn-test-openai');
 const ollamaResult     = document.getElementById('ollama-result');
 const claudeResult     = document.getElementById('claude-result');
+const openaiResult     = document.getElementById('openai-result');
 const btnSave          = document.getElementById('btn-save');
 const saveToast        = document.getElementById('save-toast');
 const installedSection = document.getElementById('installed-section');
@@ -27,21 +34,27 @@ let activeProvider = 'ollama';
 // ── Load saved settings + auto-fetch models ───────────────────────────────────
 
 chrome.storage.sync.get({
-  provider:     'ollama',
-  ollamaUrl:    'http://localhost:11434',
-  ollamaModel:  'qwen3:4b',
-  claudeApiKey: '',
-  claudeModel:  'claude-haiku-4-5-20251001',
+  provider:      'ollama',
+  ollamaUrl:     'http://localhost:11434',
+  ollamaModel:   'qwen3:4b',
+  claudeApiKey:  '',
+  claudeModel:   'claude-haiku-4-5-20251001',
+  openaiApiKey:  '',
+  openaiModel:   'gpt-4o-mini',
+  openaiBaseUrl: 'https://api.openai.com/v1',
 }, s => {
-  ollamaUrl.value   = s.ollamaUrl;
-  ollamaModel.value = s.ollamaModel;
-  claudeKey.value   = s.claudeApiKey;
-  claudeModel.value = s.claudeModel;
+  ollamaUrl.value      = s.ollamaUrl;
+  ollamaModel.value    = s.ollamaModel;
+  claudeKey.value      = s.claudeApiKey;
+  claudeModel.value    = s.claudeModel;
+  openaiKey.value      = s.openaiApiKey;
+  openaiModel.value    = s.openaiModel;
+  openaiBaseUrl.value  = s.openaiBaseUrl;
   setProvider(s.provider || 'ollama');
   syncPresets('ollama-presets', ollamaModel.value);
   syncPresets('claude-presets', claudeModel.value);
+  syncPresets('openai-presets', openaiModel.value);
 
-  // Auto-fetch models on load if Ollama is active
   if ((s.provider || 'ollama') === 'ollama') {
     loadInstalledModels(s.ollamaUrl || 'http://localhost:11434');
   }
@@ -51,13 +64,16 @@ chrome.storage.sync.get({
 
 btnOllama.addEventListener('click', () => setProvider('ollama'));
 btnClaude.addEventListener('click', () => setProvider('claude'));
+btnOpenAI.addEventListener('click', () => setProvider('openai'));
 
 function setProvider(p) {
   activeProvider = p;
   btnOllama.classList.toggle('active', p === 'ollama');
   btnClaude.classList.toggle('active', p === 'claude');
+  btnOpenAI.classList.toggle('active', p === 'openai');
   ollamaConfig.classList.toggle('hidden', p !== 'ollama');
   claudeConfig.classList.toggle('hidden', p !== 'claude');
+  openaiConfig.classList.toggle('hidden', p !== 'openai');
 }
 
 // ── Model presets ─────────────────────────────────────────────────────────────
@@ -77,11 +93,19 @@ document.getElementById('claude-presets').addEventListener('click', e => {
   syncPresets('claude-presets', btn.dataset.model);
 });
 
+document.getElementById('openai-presets').addEventListener('click', e => {
+  const btn = e.target.closest('.preset-btn');
+  if (!btn) return;
+  openaiModel.value = btn.dataset.model;
+  syncPresets('openai-presets', btn.dataset.model);
+});
+
 ollamaModel.addEventListener('input', () => {
   syncPresets('ollama-presets', ollamaModel.value);
   highlightActiveModel(ollamaModel.value);
 });
 claudeModel.addEventListener('input', () => syncPresets('claude-presets', claudeModel.value));
+openaiModel.addEventListener('input', () => syncPresets('openai-presets', openaiModel.value));
 
 function syncPresets(containerId, value) {
   document.querySelectorAll(`#${containerId} .preset-btn`).forEach(btn => {
@@ -230,6 +254,31 @@ btnTestOllama.addEventListener('click', async () => {
   });
 });
 
+// ── Test OpenAI ───────────────────────────────────────────────────────────────
+
+btnTestOpenAI.addEventListener('click', () => {
+  const key     = openaiKey.value.trim();
+  const model   = openaiModel.value.trim()   || 'gpt-4o-mini';
+  const baseUrl = openaiBaseUrl.value.trim() || 'https://api.openai.com/v1';
+
+  if (!key) {
+    setChip(openaiResult, 'err', '✗ Enter a key first');
+    return;
+  }
+
+  setChip(openaiResult, 'testing', 'Verifying…');
+  btnTestOpenAI.disabled = true;
+
+  chrome.runtime.sendMessage({ action: 'testOpenAI', key, model, baseUrl }, res => {
+    btnTestOpenAI.disabled = false;
+    if (res?.success) {
+      setChip(openaiResult, 'ok', '✓ Key valid');
+    } else {
+      setChip(openaiResult, 'err', `✗ ${res?.error || 'Invalid key'}`);
+    }
+  });
+});
+
 // ── Test Claude ───────────────────────────────────────────────────────────────
 
 btnTestClaude.addEventListener('click', () => {
@@ -262,13 +311,21 @@ btnSave.addEventListener('click', () => {
     claudeKey.focus();
     return;
   }
+  if (activeProvider === 'openai' && !openaiKey.value.trim()) {
+    setChip(openaiResult, 'err', '✗ Paste your API key before saving');
+    openaiKey.focus();
+    return;
+  }
 
   const settings = {
-    provider:     activeProvider,
-    ollamaUrl:    ollamaUrl.value.trim()   || 'http://localhost:11434',
-    ollamaModel:  ollamaModel.value.trim() || 'qwen3:4b',
-    claudeApiKey: claudeKey.value.trim(),
-    claudeModel:  claudeModel.value.trim() || 'claude-haiku-4-5-20251001',
+    provider:      activeProvider,
+    ollamaUrl:     ollamaUrl.value.trim()      || 'http://localhost:11434',
+    ollamaModel:   ollamaModel.value.trim()    || 'qwen3:4b',
+    claudeApiKey:  claudeKey.value.trim(),
+    claudeModel:   claudeModel.value.trim()    || 'claude-haiku-4-5-20251001',
+    openaiApiKey:  openaiKey.value.trim(),
+    openaiModel:   openaiModel.value.trim()    || 'gpt-4o-mini',
+    openaiBaseUrl: openaiBaseUrl.value.trim()  || 'https://api.openai.com/v1',
   };
 
   chrome.storage.sync.set(settings, () => {

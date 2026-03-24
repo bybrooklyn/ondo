@@ -33,6 +33,13 @@
           <span class="tag">Needs key</span>
         </div>
       </button>
+      <button class="pcard" id="btn-openai">
+        <span class="pcard-name">OpenAI</span>
+        <div class="pcard-tags">
+          <span class="tag">OpenAI API</span>
+          <span class="tag">Compatible</span>
+        </div>
+      </button>
     </div>
 
     <!-- Ollama -->
@@ -106,6 +113,38 @@
       <div class="test-row">
         <button class="btn-test" id="btn-test-claude">Test Key</button>
         <span class="test-chip" id="claude-result"></span>
+      </div>
+    </div>
+
+    <!-- OpenAI / OpenAI-compatible -->
+    <div class="config-panel hidden" id="openai-config">
+      <div class="field">
+        <div class="field-label">API Key</div>
+        <input type="password" id="openai-key" placeholder="sk-…" autocomplete="off" />
+        <div class="field-hint">OpenAI key from <strong>platform.openai.com</strong>. For local servers (LM Studio, LocalAI) enter any non-empty string.</div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">Base URL</div>
+        <input type="url" id="openai-base-url" placeholder="https://api.openai.com/v1" />
+        <div class="field-hint">Change this for OpenAI-compatible local servers: <code>http://localhost:1234/v1</code> (LM Studio), <code>http://localhost:11434/v1</code> (Ollama).</div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">Model</div>
+        <input type="text" id="openai-model" placeholder="gpt-4o-mini" autocomplete="off" />
+        <div class="model-presets" id="openai-presets">
+          <button class="preset-btn" data-model="gpt-4o-mini">gpt-4o-mini <em style="opacity:.45;font-style:normal">· fast</em></button>
+          <button class="preset-btn" data-model="gpt-4o">gpt-4o <em style="opacity:.45;font-style:normal">· smart</em></button>
+          <button class="preset-btn" data-model="gpt-4.1-mini">gpt-4.1-mini <em style="opacity:.45;font-style:normal">· new</em></button>
+          <button class="preset-btn" data-model="gpt-4.1">gpt-4.1 <em style="opacity:.45;font-style:normal">· best</em></button>
+          <button class="preset-btn" data-model="o4-mini">o4-mini <em style="opacity:.45;font-style:normal">· reasoning</em></button>
+        </div>
+      </div>
+
+      <div class="test-row">
+        <button class="btn-test" id="btn-test-openai">Test Key</button>
+        <span class="test-chip" id="openai-result"></span>
       </div>
     </div>
   </div>

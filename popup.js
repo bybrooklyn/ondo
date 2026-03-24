@@ -19,7 +19,8 @@ const errorText   = document.getElementById('error-text');
 const errorFix      = document.getElementById('error-fix');
 const errorParseFix = document.getElementById('error-parse-fix');
 const footerLeft    = document.getElementById('footer-left');
-const btnCached   = document.getElementById('btn-cached');
+const btnCached     = document.getElementById('btn-cached');
+const btnCopy       = document.getElementById('btn-copy');
 
 // ── Init: show cached results immediately ─────────────────────────────────────
 
@@ -35,6 +36,7 @@ const btnCached   = document.getElementById('btn-cached');
 
 btnScan.addEventListener('click', runScan);
 btnOptions.addEventListener('click', () => chrome.runtime.openOptionsPage());
+btnCopy.addEventListener('click', copyTasks);
 
 // ── Scan ──────────────────────────────────────────────────────────────────────
 
@@ -72,7 +74,7 @@ async function runScan() {
         setState('error', response?.error || 'Unknown error', response?.errorCode);
         return;
       }
-      render(response.todos, response.sources, Date.now(), response.rawCount, response.warnings);
+      render(response.todos, response.sources, Date.now(), response.rawCount, response.warnings, false, response.model);
     }, 280);
   });
 }
@@ -83,7 +85,11 @@ function setProgress(pct) {
 
 // ── Render ────────────────────────────────────────────────────────────────────
 
-function render(todos, sources, ts, rawCount, warnings, stale = false) {
+// Store current todos for copy
+let currentTodos = [];
+
+function render(todos, sources, ts, rawCount, warnings, stale = false, model = null) {
+  currentTodos = todos || [];
   const counts = { classroom: 0, outlook: 0, oncourse: 0 };
   (todos || []).forEach(t => {
     const k = (t.source || '').toLowerCase();
@@ -149,9 +155,15 @@ function render(todos, sources, ts, rawCount, warnings, stale = false) {
     footerLeft.append(timeAgo(ts));
   }
 
-  if (rawCount) footerLeft.append(` · ${rawCount} raw`);
+  if (model) {
+    const m = document.createElement('span');
+    m.className   = 'footer-model';
+    m.textContent = ` · ${model}`;
+    footerLeft.appendChild(m);
+  }
 
   btnCached.style.display = 'none';
+  btnCopy.classList.remove('hidden');
 }
 
 const VALID_PRIORITY = new Set(['high', 'medium', 'low']);
@@ -191,9 +203,31 @@ function buildCard(task, priority) {
 
 // ── State machine ─────────────────────────────────────────────────────────────
 
+function copyTasks() {
+  if (!currentTodos.length) return;
+  const lines = ['# Ondo Task List', ''];
+  const groups = { high: 'Urgent', medium: 'This Week', low: 'Later' };
+  for (const [p, label] of Object.entries(groups)) {
+    const tasks = currentTodos.filter(t => (t.priority || 'low') === p);
+    if (!tasks.length) continue;
+    lines.push(`## ${label}`);
+    tasks.forEach(t => {
+      const due = t.dueDate ? ` (due ${t.dueDate})` : '';
+      lines.push(`- [ ] [${t.title}](${t.url || '#'}) — ${t.source}${due}`);
+    });
+    lines.push('');
+  }
+  navigator.clipboard.writeText(lines.join('\n')).then(() => {
+    const orig = btnCopy.textContent;
+    btnCopy.textContent = '✓ Copied';
+    setTimeout(() => { btnCopy.textContent = orig; }, 1500);
+  });
+}
+
 function setState(state, msg, errorCode) {
   [loadingBar, statusStrip, sourceBar, taskList, introState, emptyState, errorState]
     .forEach(hide);
+  btnCopy.classList.add('hidden');
 
   btnScan.disabled    = false;
   btnScan.textContent = 'Scan';

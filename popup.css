@@ -559,7 +559,21 @@ footer {
 .footer-left strong { color: var(--text-2); font-weight: 600; }
 .footer-right { font-size: 10px; color: var(--dim); }
 
-.stale-hint { color: var(--dim); font-size: 9px; }
+.stale-hint   { color: var(--dim); font-size: 9px; }
+.footer-model { color: var(--dim); font-size: 9px; opacity: .7; }
+
+.btn-copy {
+  font-size: 10px;
+  background: transparent;
+  color: var(--lime);
+  border: 1px solid rgba(180,240,66,.25);
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  margin-right: 4px;
+  transition: background .15s;
+}
+.btn-copy:hover { background: var(--lime-dim); }
 
 .btn-load-cache {
   font-size: 10px;

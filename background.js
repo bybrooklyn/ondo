@@ -18,6 +18,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     testClaudeKey(message.key, message.model, sendResponse);
     return true;
   }
+  if (message.action === 'testOpenAI') {
+    testOpenAIKey(message.key, message.model, message.baseUrl, sendResponse);
+    return true;
+  }
 });
 
 // ── URL helpers (hostname-exact matching) ─────────────────────────────────────
@@ -134,6 +138,8 @@ async function handleScrapeAll(sendResponse) {
       sources,
       warnings: result.parseError ? [...warnings, `AI: ${result.parseError}`] : warnings,
       rawCount: allItems.length,
+      model:    activeModel(settings),
+      provider: settings.provider,
     });
   } catch (err) {
     sendResponse({ success: false, error: err.message, errorCode: err.code ?? null });
@@ -507,11 +513,14 @@ function onCourseScrapeFn() {
 function getSettings() {
   return new Promise(resolve => {
     chrome.storage.sync.get({
-      provider:     'ollama',
-      ollamaUrl:    OLLAMA_DEFAULT_URL,
-      ollamaModel:  'qwen3:4b',
-      claudeApiKey: '',
-      claudeModel:  'claude-haiku-4-5-20251001',
+      provider:      'ollama',
+      ollamaUrl:     OLLAMA_DEFAULT_URL,
+      ollamaModel:   'qwen3:4b',
+      claudeApiKey:  '',
+      claudeModel:   'claude-haiku-4-5-20251001',
+      openaiApiKey:  '',
+      openaiModel:   'gpt-4o-mini',
+      openaiBaseUrl: 'https://api.openai.com/v1',
     }, resolve);
   });
 }
@@ -642,8 +651,15 @@ ${JSON.stringify(items)}`;
 
 async function processWithAI(items, settings) {
   const prompt = buildPrompt(items);
-  if (settings.provider === 'claude') return callClaude(prompt, settings);
+  if (settings.provider === 'claude')  return callClaude(prompt, settings);
+  if (settings.provider === 'openai')  return callOpenAI(prompt, settings);
   return callOllama(prompt, settings);
+}
+
+function activeModel(settings) {
+  if (settings.provider === 'claude') return settings.claudeModel  || 'claude-haiku-4-5-20251001';
+  if (settings.provider === 'openai') return settings.openaiModel  || 'gpt-4o-mini';
+  return settings.ollamaModel || 'qwen3:4b';
 }
 
 // ── Ollama ────────────────────────────────────────────────────────────────────
@@ -769,6 +785,70 @@ async function callClaude(prompt, settings) {
   const data = await res.json();
   const text = data.content?.[0]?.text ?? '';
   return parseAndValidateAI(text, 'claude');
+}
+
+// ── OpenAI-compatible API ─────────────────────────────────────────────────────
+// Works with: api.openai.com, LM Studio, LocalAI, Ollama /v1, Jan, etc.
+
+async function callOpenAI(prompt, settings) {
+  if (!settings.openaiApiKey) {
+    throw new Error('OpenAI API key not set. Open Options → add your key.');
+  }
+
+  const base  = (settings.openaiBaseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
+  const model = (settings.openaiModel  || 'gpt-4o-mini').trim();
+
+  let res;
+  try {
+    res = await fetch(`${base}/chat/completions`, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${settings.openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: prompt.system },
+          { role: 'user',   content: prompt.user   },
+        ],
+        temperature:     0,
+        response_format: { type: 'json_object' }, // structured JSON output
+      }),
+    });
+  } catch (e) {
+    throw new Error(`Cannot reach OpenAI endpoint at ${base}. Check your base URL and network.`);
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`OpenAI ${res.status}: ${err.error?.message || res.statusText}`);
+  }
+
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content ?? '';
+  return parseAndValidateAI(text, model);
+}
+
+async function testOpenAIKey(key, model, baseUrl, sendResponse) {
+  try {
+    const base = (baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
+    const res  = await fetch(`${base}/chat/completions`, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        model:      model || 'gpt-4o-mini',
+        max_tokens: 10,
+        messages:   [{ role: 'user', content: 'Say: ok' }],
+      }),
+    });
+    sendResponse({ success: res.ok, error: res.ok ? null : `HTTP ${res.status}` });
+  } catch (e) {
+    sendResponse({ success: false, error: e.message });
+  }
 }
 
 async function testClaudeKey(key, model, sendResponse) {
