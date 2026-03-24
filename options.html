@@ -6,222 +6,230 @@
   <link rel="stylesheet" href="options.css" />
 </head>
 <body>
-<div class="page">
+<div class="layout">
 
-  <!-- Header -->
-  <div class="page-header">
-    <div class="page-logo">Ondo <span>Settings</span></div>
-  </div>
-
-  <!-- ── AI Provider ────────────────────────────────────────────────────── -->
-  <div class="section">
-    <div class="section-label">AI Provider</div>
-
-    <div class="provider-cards">
-      <button class="pcard active" id="btn-ollama">
-        <span class="pcard-name">Ollama</span>
-        <div class="pcard-tags">
-          <span class="tag">Local</span>
-          <span class="tag">Free</span>
-          <span class="tag">Private</span>
-        </div>
-      </button>
-      <button class="pcard" id="btn-claude">
-        <span class="pcard-name">Claude</span>
-        <div class="pcard-tags">
-          <span class="tag">Anthropic API</span>
-          <span class="tag">Needs key</span>
-        </div>
-      </button>
-      <button class="pcard" id="btn-openai">
-        <span class="pcard-name">OpenAI</span>
-        <div class="pcard-tags">
-          <span class="tag">OpenAI API</span>
-          <span class="tag">Compatible</span>
-        </div>
-      </button>
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header class="top-bar">
+    <div class="top-logo">
+      <span class="logo-mark">Ondo</span>
+      <span class="logo-sep">/</span>
+      <span class="logo-sub">Settings</span>
     </div>
+    <div class="top-version">v1.1.0</div>
+  </header>
 
-    <!-- Ollama -->
-    <div class="config-panel" id="ollama-config">
-      <div class="field">
-        <div class="field-label">Base URL</div>
-        <input type="url" id="ollama-url" placeholder="http://localhost:11434" />
-        <div class="field-hint">Ollama must be running locally. Default port is 11434.</div>
-      </div>
+  <!-- ── Two-column body ─────────────────────────────────────────────────── -->
+  <div class="content">
 
-      <div class="field">
-        <div class="field-label">Model</div>
-        <input type="text" id="ollama-model" list="ollama-model-datalist" placeholder="qwen3:4b" autocomplete="off" />
-        <datalist id="ollama-model-datalist"></datalist>
-        <div class="model-presets" id="ollama-presets">
-          <button class="preset-btn" data-model="qwen3:4b">qwen3:4b <em style="opacity:.45;font-style:normal">· 2.6 GB</em></button>
-          <button class="preset-btn" data-model="qwen3:8b">qwen3:8b <em style="opacity:.45;font-style:normal">· 5 GB</em></button>
-          <button class="preset-btn" data-model="gemma3:4b">gemma3:4b <em style="opacity:.45;font-style:normal">· 3 GB</em></button>
-          <button class="preset-btn" data-model="gpt-oss:20b">gpt-oss:20b <em style="opacity:.45;font-style:normal">· 16 GB</em></button>
-        </div>
-        <div class="field-hint">Pull a model: <code>ollama pull qwen3:4b</code></div>
-      </div>
+    <!-- ── Left: AI Provider ─────────────────────────────────────────────── -->
+    <div class="panel panel-left">
+      <div class="section-label">AI Provider</div>
 
-      <!-- Installed models (populated after connecting) -->
-      <div id="installed-section" class="hidden">
-        <div class="field-label" style="margin-bottom:8px">Installed Models</div>
-        <div id="installed-list"></div>
-        <div class="field-hint" id="installed-empty" style="display:none">
-          No models installed. Run <code>ollama pull qwen3:4b</code> to get started.
-        </div>
-      </div>
-
-      <!-- CORS fix hint (shown when 403) -->
-      <div id="cors-fix" class="hidden cors-fix-box">
-        <div class="cors-fix-title">⚠ Ollama blocked the request (403)</div>
-        <div class="cors-fix-body">
-          Chrome extensions are not in Ollama's allowed origins.<br/>
-          Restart Ollama with this environment variable:
-        </div>
-        <div class="cors-fix-code">OLLAMA_ORIGINS="*" ollama serve</div>
-        <div class="cors-fix-hint">
-          macOS Ollama.app: quit the app, run the command above in Terminal.<br/>
-          To persist: add <code>OLLAMA_ORIGINS=*</code> to <code>~/.zshrc</code> or <code>~/.bash_profile</code>.
-        </div>
-      </div>
-
-      <div class="test-row">
-        <button class="btn-test" id="btn-test-ollama">Test Connection</button>
-        <span class="test-chip" id="ollama-result"></span>
-      </div>
-    </div>
-
-    <!-- Claude -->
-    <div class="config-panel hidden" id="claude-config">
-      <div class="field">
-        <div class="field-label">API Key</div>
-        <input type="password" id="claude-key" placeholder="sk-ant-api03-…" autocomplete="off" />
-        <div class="field-hint">Get your key at <strong>console.anthropic.com</strong>. Stored locally in Chrome only — never sent anywhere except Anthropic.</div>
-      </div>
-
-      <div class="field">
-        <div class="field-label">Model</div>
-        <input type="text" id="claude-model" placeholder="claude-haiku-4-5-20251001" />
-        <div class="model-presets" id="claude-presets">
-          <button class="preset-btn" data-model="claude-haiku-4-5-20251001">Haiku 4.5 <em style="opacity:.5;font-style:normal">· fast</em></button>
-          <button class="preset-btn" data-model="claude-sonnet-4-6">Sonnet 4.6 <em style="opacity:.5;font-style:normal">· balanced</em></button>
-          <button class="preset-btn" data-model="claude-opus-4-6">Opus 4.6 <em style="opacity:.5;font-style:normal">· best</em></button>
-        </div>
-      </div>
-
-      <div class="test-row">
-        <button class="btn-test" id="btn-test-claude">Test Key</button>
-        <span class="test-chip" id="claude-result"></span>
-      </div>
-    </div>
-
-    <!-- OpenAI / OpenAI-compatible -->
-    <div class="config-panel hidden" id="openai-config">
-      <div class="field">
-        <div class="field-label">API Key</div>
-        <input type="password" id="openai-key" placeholder="sk-…" autocomplete="off" />
-        <div class="field-hint">OpenAI key from <strong>platform.openai.com</strong>. For local servers (LM Studio, LocalAI) enter any non-empty string.</div>
-      </div>
-
-      <div class="field">
-        <div class="field-label">Base URL</div>
-        <input type="url" id="openai-base-url" placeholder="https://api.openai.com/v1" />
-        <div class="field-hint">Change this for OpenAI-compatible local servers: <code>http://localhost:1234/v1</code> (LM Studio), <code>http://localhost:11434/v1</code> (Ollama).</div>
-      </div>
-
-      <div class="field">
-        <div class="field-label">Model</div>
-        <input type="text" id="openai-model" placeholder="gpt-4o-mini" autocomplete="off" />
-        <div class="model-presets" id="openai-presets">
-          <button class="preset-btn" data-model="gpt-4o-mini">gpt-4o-mini <em style="opacity:.45;font-style:normal">· fast</em></button>
-          <button class="preset-btn" data-model="gpt-4o">gpt-4o <em style="opacity:.45;font-style:normal">· smart</em></button>
-          <button class="preset-btn" data-model="gpt-4.1-mini">gpt-4.1-mini <em style="opacity:.45;font-style:normal">· new</em></button>
-          <button class="preset-btn" data-model="gpt-4.1">gpt-4.1 <em style="opacity:.45;font-style:normal">· best</em></button>
-          <button class="preset-btn" data-model="o4-mini">o4-mini <em style="opacity:.45;font-style:normal">· reasoning</em></button>
-        </div>
-      </div>
-
-      <div class="test-row">
-        <button class="btn-test" id="btn-test-openai">Test Key</button>
-        <span class="test-chip" id="openai-result"></span>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Advanced ──────────────────────────────────────────────────────── -->
-  <div class="section">
-    <div class="section-label">Advanced</div>
-
-    <div class="adv-row">
-      <label class="toggle-row" for="smart-filter-toggle">
-        <div class="toggle-info">
-          <div class="toggle-name">Smart Filter</div>
-          <div class="toggle-desc">
-            Run scraped data through AI pre-filtering before generating tasks.
-            More accurate but uses ~2-3× more tokens per scan.
+      <div class="provider-cards">
+        <button class="pcard active" id="btn-ollama">
+          <span class="pcard-name">Ollama</span>
+          <div class="pcard-tags">
+            <span class="tag">Local</span>
+            <span class="tag">Free</span>
+            <span class="tag">Private</span>
           </div>
-          <div class="toggle-warn">
-            ⚠ Recommended with Claude, GPT-4o-mini, or qwen3:8b+.
-            Smaller models may produce errors or drop items.
+        </button>
+        <button class="pcard" id="btn-claude">
+          <span class="pcard-name">Claude</span>
+          <div class="pcard-tags">
+            <span class="tag">Anthropic</span>
+            <span class="tag">Needs key</span>
+          </div>
+        </button>
+        <button class="pcard" id="btn-openai">
+          <span class="pcard-name">OpenAI</span>
+          <div class="pcard-tags">
+            <span class="tag">OpenAI API</span>
+            <span class="tag">Compatible</span>
+          </div>
+        </button>
+      </div>
+
+      <!-- Ollama -->
+      <div class="config-panel" id="ollama-config">
+        <div class="field">
+          <div class="field-label">Base URL</div>
+          <input type="url" id="ollama-url" placeholder="http://localhost:11434" />
+          <div class="field-hint">Ollama must be running locally. Default port is 11434.</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Model</div>
+          <input type="text" id="ollama-model" list="ollama-model-datalist" placeholder="qwen3:4b" autocomplete="off" />
+          <datalist id="ollama-model-datalist"></datalist>
+          <div class="model-presets" id="ollama-presets">
+            <button class="preset-btn" data-model="qwen3:4b">qwen3:4b <em>· 2.6 GB</em></button>
+            <button class="preset-btn" data-model="qwen3:8b">qwen3:8b <em>· 5 GB</em></button>
+            <button class="preset-btn" data-model="gemma3:4b">gemma3:4b <em>· 3 GB</em></button>
+            <button class="preset-btn" data-model="gpt-oss:20b">gpt-oss:20b <em>· 16 GB</em></button>
+          </div>
+          <div class="field-hint">Pull a model: <code>ollama pull qwen3:4b</code></div>
+        </div>
+
+        <!-- Installed models -->
+        <div id="installed-section" class="hidden">
+          <div class="field-label" style="margin-bottom:6px">Installed Models</div>
+          <div id="installed-list"></div>
+          <div class="field-hint" id="installed-empty" style="display:none">
+            No models installed. Run <code>ollama pull qwen3:4b</code> to get started.
           </div>
         </div>
-        <input type="checkbox" id="smart-filter-toggle" />
-        <span class="toggle-switch"></span>
-      </label>
-    </div>
 
-    <div class="field" style="margin-top:12px">
-      <div class="field-label">Outlook Email Cap</div>
-      <input type="number" id="outlook-cap" min="1" max="50" value="15" style="width:80px" />
-      <div class="field-hint">
-        Max Outlook emails sent to AI per scan. Higher = more coverage but noisier.
-        Emails are ranked by school-relevance; the top N are kept.
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Automation ───────────────────────────────────────────────────── -->
-  <div class="section">
-    <div class="section-label">Automation</div>
-
-    <div class="adv-row">
-      <div class="field-label" style="margin-bottom:6px">Auto-scan interval</div>
-      <div class="seg-group" id="autoscan-seg">
-        <button class="seg active" data-val="off">Off</button>
-        <button class="seg"        data-val="30">30 min</button>
-        <button class="seg"        data-val="60">1 hr</button>
-        <button class="seg"        data-val="180">3 hr</button>
-      </div>
-      <div class="field-hint" style="margin-top:6px">
-        Silently re-scan in the background and update your badge. The popup does not open.
-      </div>
-    </div>
-
-    <div class="adv-row" style="margin-top:14px">
-      <label class="toggle-row" for="notifications-toggle">
-        <div class="toggle-info">
-          <div class="toggle-name">Urgent task notifications</div>
-          <div class="toggle-desc">
-            Show a Chrome notification when a new high-priority task is detected during auto-scan.
+        <!-- CORS fix -->
+        <div id="cors-fix" class="hidden cors-fix-box">
+          <div class="cors-fix-title">⚠ Ollama blocked the request (403)</div>
+          <div class="cors-fix-body">
+            Chrome extensions are not in Ollama's allowed origins.<br/>
+            Restart Ollama with this environment variable:
+          </div>
+          <div class="cors-fix-code">OLLAMA_ORIGINS="*" ollama serve</div>
+          <div class="cors-fix-hint">
+            macOS Ollama.app: quit the app, run the command above in Terminal.<br/>
+            To persist: add <code>OLLAMA_ORIGINS=*</code> to <code>~/.zshrc</code> or <code>~/.bash_profile</code>.
           </div>
         </div>
-        <input type="checkbox" id="notifications-toggle" />
-        <span class="toggle-switch"></span>
-      </label>
-    </div>
-  </div>
 
-  <hr />
+        <div class="test-row">
+          <button class="btn-test" id="btn-test-ollama">Test Connection</button>
+          <span class="test-chip" id="ollama-result"></span>
+        </div>
+      </div>
 
-  <div class="save-bar">
+      <!-- Claude -->
+      <div class="config-panel hidden" id="claude-config">
+        <div class="field">
+          <div class="field-label">API Key</div>
+          <input type="password" id="claude-key" placeholder="sk-ant-api03-…" autocomplete="off" />
+          <div class="field-hint">Get your key at <strong>console.anthropic.com</strong>. Stored locally — never sent anywhere except Anthropic.</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Model</div>
+          <input type="text" id="claude-model" placeholder="claude-haiku-4-5-20251001" />
+          <div class="model-presets" id="claude-presets">
+            <button class="preset-btn" data-model="claude-haiku-4-5-20251001">Haiku 4.5 <em>· fast</em></button>
+            <button class="preset-btn" data-model="claude-sonnet-4-6">Sonnet 4.6 <em>· balanced</em></button>
+            <button class="preset-btn" data-model="claude-opus-4-6">Opus 4.6 <em>· best</em></button>
+          </div>
+        </div>
+
+        <div class="test-row">
+          <button class="btn-test" id="btn-test-claude">Test Key</button>
+          <span class="test-chip" id="claude-result"></span>
+        </div>
+      </div>
+
+      <!-- OpenAI / compatible -->
+      <div class="config-panel hidden" id="openai-config">
+        <div class="field">
+          <div class="field-label">API Key</div>
+          <input type="password" id="openai-key" placeholder="sk-…" autocomplete="off" />
+          <div class="field-hint">OpenAI key from <strong>platform.openai.com</strong>. For local servers enter any non-empty string.</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Base URL</div>
+          <input type="url" id="openai-base-url" placeholder="https://api.openai.com/v1" />
+          <div class="field-hint">Change for local servers: <code>http://localhost:1234/v1</code> (LM Studio), <code>http://localhost:11434/v1</code> (Ollama).</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Model</div>
+          <input type="text" id="openai-model" placeholder="gpt-4o-mini" autocomplete="off" />
+          <div class="model-presets" id="openai-presets">
+            <button class="preset-btn" data-model="gpt-4o-mini">gpt-4o-mini <em>· fast</em></button>
+            <button class="preset-btn" data-model="gpt-4o">gpt-4o <em>· smart</em></button>
+            <button class="preset-btn" data-model="gpt-4.1-mini">gpt-4.1-mini <em>· new</em></button>
+            <button class="preset-btn" data-model="gpt-4.1">gpt-4.1 <em>· best</em></button>
+            <button class="preset-btn" data-model="o4-mini">o4-mini <em>· reasoning</em></button>
+          </div>
+        </div>
+
+        <div class="test-row">
+          <button class="btn-test" id="btn-test-openai">Test Key</button>
+          <span class="test-chip" id="openai-result"></span>
+        </div>
+      </div>
+    </div><!-- /panel-left -->
+
+    <!-- ── Right: Advanced + Automation ──────────────────────────────────── -->
+    <div class="panel panel-right">
+
+      <div class="section-label">Advanced</div>
+
+      <div class="field" style="margin-bottom:14px">
+        <label class="toggle-row" for="smart-filter-toggle">
+          <div class="toggle-info">
+            <div class="toggle-name">Smart Filter</div>
+            <div class="toggle-desc">
+              AI pre-filters scraped data before generating tasks.
+              More accurate, but uses ~2–3× more tokens per scan.
+            </div>
+            <div class="toggle-warn">
+              ⚠ Recommended with Claude, GPT-4o-mini, or qwen3:8b+.
+            </div>
+          </div>
+          <input type="checkbox" id="smart-filter-toggle" />
+          <span class="toggle-switch"></span>
+        </label>
+      </div>
+
+      <div class="field">
+        <div class="field-label">Outlook Email Cap</div>
+        <div class="cap-row">
+          <input type="number" id="outlook-cap" min="1" max="50" value="15" />
+          <span class="field-hint">emails per scan</span>
+        </div>
+        <div class="field-hint">
+          Emails are ranked by school-relevance; top N are kept.
+        </div>
+      </div>
+
+      <div class="section-label section-label--gap">Automation</div>
+
+      <div class="field" style="margin-bottom:14px">
+        <div class="field-label" style="margin-bottom:6px">Auto-scan interval</div>
+        <div class="seg-group" id="autoscan-seg">
+          <button class="seg active" data-val="off">Off</button>
+          <button class="seg"        data-val="30">30 min</button>
+          <button class="seg"        data-val="60">1 hr</button>
+          <button class="seg"        data-val="180">3 hr</button>
+        </div>
+        <div class="field-hint" style="margin-top:6px">
+          Silently re-scans in the background and updates your badge.
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="toggle-row" for="notifications-toggle">
+          <div class="toggle-info">
+            <div class="toggle-name">Urgent notifications</div>
+            <div class="toggle-desc">
+              Show a Chrome notification when a new high-priority task is found during auto-scan.
+            </div>
+          </div>
+          <input type="checkbox" id="notifications-toggle" />
+          <span class="toggle-switch"></span>
+        </label>
+      </div>
+
+    </div><!-- /panel-right -->
+
+  </div><!-- /content -->
+
+  <!-- ── Footer ──────────────────────────────────────────────────────────── -->
+  <footer class="bottom-bar">
     <button class="btn-save" id="btn-save">Save Settings</button>
-  </div>
+  </footer>
 
-</div>
+</div><!-- /layout -->
 
 <div id="save-toast">Settings saved ✓</div>
-
 <script src="options.js"></script>
 </body>
 </html>
