@@ -1,0 +1,15 @@
+# Extension signing key — never commit this
+ondo.pem
+*.pem
+
+# Build artifacts
+*.crx
+*.zip
+dist/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/

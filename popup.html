@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Ondo</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header>
+    <div class="logo">
+      <span class="logo-mark">Ondo</span>
+      <span class="logo-sep">/</span>
+      <span class="logo-sub">Task Radar</span>
+    </div>
+    <div class="header-right">
+      <button class="btn-icon" id="btn-options" title="Settings">⚙</button>
+      <button class="btn-scan" id="btn-scan">Scan</button>
+    </div>
+  </header>
+
+  <!-- ── Loading progress bar ────────────────────────────────────────────── -->
+  <div id="loading-bar" class="hidden">
+    <div id="loading-progress"></div>
+  </div>
+
+  <!-- ── Status strip (shown while scanning) ─────────────────────────────── -->
+  <div id="status-strip" class="hidden">
+    <div class="spinner"></div>
+    <span id="status-text">Scanning tabs…</span>
+    <span id="status-step"></span>
+  </div>
+
+  <!-- ── Source bar (shown on results / empty) ───────────────────────────── -->
+  <div id="source-bar" class="hidden">
+    <div class="src-chip" id="chip-classroom">
+      <div class="src-dot"></div>
+      <span>Classroom</span>
+      <span class="src-count" id="cnt-classroom"></span>
+    </div>
+    <div class="src-chip" id="chip-outlook">
+      <div class="src-dot"></div>
+      <span>Outlook</span>
+      <span class="src-count" id="cnt-outlook"></span>
+    </div>
+    <div class="src-chip" id="chip-oncourse">
+      <div class="src-dot"></div>
+      <span>OnCourse</span>
+      <span class="src-count" id="cnt-oncourse"></span>
+    </div>
+  </div>
+
+  <!-- ── Intro ────────────────────────────────────────────────────────────── -->
+  <div id="intro-state">
+    <div class="intro-icon">📡</div>
+    <div class="intro-head">
+      Open your school tabs, then hit <em>Scan</em>.<br />
+      Ondo will pull everything into one list.
+    </div>
+    <ul class="intro-sources">
+      <li class="c">classroom.google.com</li>
+      <li class="o">outlook.live.com &nbsp;·&nbsp; office.com</li>
+      <li class="n">oncourse.cc &nbsp;·&nbsp; oncourse.iu.edu</li>
+    </ul>
+  </div>
+
+  <!-- ── Task list ────────────────────────────────────────────────────────── -->
+  <div id="task-list" class="hidden"></div>
+
+  <!-- ── Empty ────────────────────────────────────────────────────────────── -->
+  <div id="empty-state" class="hidden">
+    <div class="empty-icon">🎉</div>
+    <div class="empty-head">Nothing to do</div>
+    <div class="empty-sub">
+      You might be all caught up — or the pages<br />haven't fully loaded yet.
+    </div>
+  </div>
+
+  <!-- ── Error ────────────────────────────────────────────────────────────── -->
+  <div id="error-state" class="hidden">
+    <div class="error-icon">⚠</div>
+    <div class="error-head" id="error-head">Something went wrong</div>
+    <div class="error-msg" id="error-text"></div>
+
+    <!-- shown only for OLLAMA_CORS errors -->
+    <div class="error-fix hidden" id="error-fix">
+      <div class="fix-label">Run this in Terminal, then restart Ollama:</div>
+      <div class="fix-code" id="fix-code">OLLAMA_ORIGINS="*" ollama serve</div>
+      <div class="fix-hint">
+        macOS app: quit Ollama, then run the command above.<br/>
+        To persist: add <code>OLLAMA_ORIGINS=*</code> to your shell profile.
+      </div>
+    </div>
+
+    <!-- shown only for AI_PARSE_ERROR -->
+    <div class="error-fix hidden" id="error-parse-fix">
+      <div class="fix-label">The AI returned an unreadable response.</div>
+      <div class="fix-hint">
+        Try switching to <code>qwen3:4b</code> or <code>gemma3:4b</code> in Options.<br/>
+        If using Ollama, make sure the model is fully downloaded.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Footer ───────────────────────────────────────────────────────────── -->
+  <footer>
+    <span class="footer-left" id="footer-left"></span>
+    <span class="footer-right" id="footer-right">
+      <button class="btn-load-cache" id="btn-cached" style="display:none">↺ Load last scan</button>
+    </span>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
