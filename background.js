@@ -187,13 +187,7 @@ async function handleScrapeAll(sendResponse) {
 
   // Wrap sendResponse so we can never call it twice (timeout + normal path)
   let responded = false;
-  const timeoutId = setTimeout(() => {
-    respond({
-      success:   false,
-      error:     'Scan timed out after 5 minutes.\n\n• If using Ollama: the model may be slow on CPU — try qwen3:4b if you haven\'t already\n• Try reloading your school pages before scanning\n• Check that Ollama is running: ollama serve',
-      errorCode: 'SCAN_TIMEOUT',
-    });
-  }, SCAN_TIMEOUT_MS);
+  let timeoutId;
 
   const respond = data => {
     if (responded) return;
@@ -202,6 +196,14 @@ async function handleScrapeAll(sendResponse) {
     scanInProgress = false;
     sendResponse(data);
   };
+
+  timeoutId = setTimeout(() => {
+    respond({
+      success:   false,
+      error:     'Scan timed out after 5 minutes.\n\n• If using Ollama: the model may be slow on CPU — try qwen3:4b if you haven\'t already\n• Try reloading your school pages before scanning\n• Check that Ollama is running: ollama serve',
+      errorCode: 'SCAN_TIMEOUT',
+    });
+  }, SCAN_TIMEOUT_MS);
 
   scanInProgress = true;
 
@@ -704,10 +706,12 @@ function outlookScrapeFn() {
     }
   } catch {}
 
-  // Sort by relevance score (highest first) — real cap applied by orchestrator
+  // Sort by relevance score (highest first) — hard cap applied by orchestrator (outlookCap setting)
   items.sort((a, b) => (b._score || 0) - (a._score || 0));
   console.log('[Ondo/outlook] found', items.length, 'school-relevant items on', window.location.href);
-  return items.slice(0, 25);
+  // Generous local cap (60) to avoid returning unbounded results from huge inboxes;
+  // the user-configurable outlookCap (max 50) in the orchestrator is always applied on top.
+  return items.slice(0, 60);
 }
 function onCourseScrapeFn() {
   const items = [];
@@ -732,7 +736,7 @@ function onCourseScrapeFn() {
   };
 
   const duePat = text => {
-    const m = (text||'').match(/[Dd]ue\s*(?:on|by|at)?\s*:?\s*((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\.?\s+\d{1,2}(?:,?\s*\d{4})?|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{4}-\d{2}-\d{2})/);
+    const m = (text||'').match(/[Dd]ue\s*(?:on|by|at)?\s*:?\s*((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\.?\s+\d{1,2}(?:,?\s*\d{4})?|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{4}-\d{2}-\d{2}|today|tomorrow)/i);
     return m?.[1]?.trim() || null;
   };
 
@@ -795,6 +799,7 @@ function onCourseScrapeFn() {
     });
   }
 
+  console.log('[Ondo/oncourse] found', items.length, 'items on', window.location.href);
   return items;
 }
 
@@ -1186,8 +1191,8 @@ async function callOllama(prompt, settings, opts) {
       "The extension's origin is not in Ollama's allowed list.");
   }
   if (!res.ok) {
-    const body2 = await res.json().catch(() => ({}));
-    throw new Error(`Ollama ${res.status}: ${body2.error || res.statusText}`);
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(`Ollama ${res.status}: ${errBody.error || res.statusText}`);
   }
 
   const data = await res.json();
@@ -1197,9 +1202,12 @@ async function callOllama(prompt, settings, opts) {
 }
 
 async function testOllamaConnection(url, sendResponse) {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 10_000);
   try {
     const base = (url || OLLAMA_DEFAULT_URL).replace(/\/$/, '');
-    const res  = await fetch(`${base}/api/tags`);
+    const res  = await fetch(`${base}/api/tags`, { signal: abort.signal });
+    clearTimeout(timer);
 
     if (res.status === 403) {
       sendResponse({ success: false, errorCode: 'OLLAMA_CORS',
@@ -1211,16 +1219,21 @@ async function testOllamaConnection(url, sendResponse) {
       const models = (data.models || []).map(m => ({
         name:   m.name,
         size:   m.size,
-        params: m.details?.parameter_size  ?? null,
+        params: m.details?.parameter_size     ?? null,
         quant:  m.details?.quantization_level ?? null,
-        family: m.details?.family          ?? null,
+        family: m.details?.family             ?? null,
       }));
       sendResponse({ success: true, models });
     } else {
       sendResponse({ success: false, error: `HTTP ${res.status}` });
     }
   } catch (e) {
-    sendResponse({ success: false, errorCode: 'OLLAMA_UNREACHABLE', error: e.message });
+    clearTimeout(timer);
+    if (e.name === 'AbortError') {
+      sendResponse({ success: false, errorCode: 'OLLAMA_UNREACHABLE', error: 'Connection timed out after 10s — is Ollama running?' });
+    } else {
+      sendResponse({ success: false, errorCode: 'OLLAMA_UNREACHABLE', error: e.message });
+    }
   }
 }
 
@@ -1334,6 +1347,8 @@ async function callOpenAI(prompt, settings, opts) {
 }
 
 async function testOpenAIKey(key, model, baseUrl, sendResponse) {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 10_000);
   try {
     const base = (baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
     const res  = await fetch(`${base}/chat/completions`, {
@@ -1342,12 +1357,14 @@ async function testOpenAIKey(key, model, baseUrl, sendResponse) {
         'Content-Type':  'application/json',
         'Authorization': `Bearer ${key}`,
       },
-      body: JSON.stringify({
+      body:   JSON.stringify({
         model:      model || 'gpt-4o-mini',
         max_tokens: 10,
         messages:   [{ role: 'user', content: 'Say: ok' }],
       }),
+      signal: abort.signal,
     });
+    clearTimeout(timer);
     if (res.ok) {
       sendResponse({ success: true });
     } else {
@@ -1359,26 +1376,35 @@ async function testOpenAIKey(key, model, baseUrl, sendResponse) {
       sendResponse({ success: false, error: errMsg });
     }
   } catch (e) {
-    sendResponse({ success: false, error: `Cannot reach ${(baseUrl||'').replace(/\/$/, '') || 'endpoint'}. Check Base URL and network.` });
+    clearTimeout(timer);
+    if (e.name === 'AbortError') {
+      sendResponse({ success: false, error: 'Request timed out — check your Base URL and network.' });
+    } else {
+      sendResponse({ success: false, error: `Cannot reach ${(baseUrl||'').replace(/\/$/, '') || 'endpoint'}. Check Base URL and network.` });
+    }
   }
 }
 
 async function testClaudeKey(key, model, sendResponse) {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 10_000);
   try {
     const res = await fetch(CLAUDE_API_URL, {
       method:  'POST',
       headers: {
-        'Content-Type':                            'application/json',
-        'x-api-key':                               key,
-        'anthropic-version':                       '2023-06-01',
+        'Content-Type':                              'application/json',
+        'x-api-key':                                 key,
+        'anthropic-version':                         '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({
+      body:   JSON.stringify({
         model:      model || 'claude-haiku-4-5-20251001',
         max_tokens: 32,
         messages:   [{ role: 'user', content: 'Reply with the single word: ok' }],
       }),
+      signal: abort.signal,
     });
+    clearTimeout(timer);
     if (res.ok) {
       sendResponse({ success: true });
     } else {
@@ -1390,7 +1416,12 @@ async function testClaudeKey(key, model, sendResponse) {
       sendResponse({ success: false, error: errMsg });
     }
   } catch (e) {
-    sendResponse({ success: false, error: 'Cannot reach Anthropic API. Check network.' });
+    clearTimeout(timer);
+    if (e.name === 'AbortError') {
+      sendResponse({ success: false, error: 'Request timed out — check your network.' });
+    } else {
+      sendResponse({ success: false, error: 'Cannot reach Anthropic API. Check network.' });
+    }
   }
 }
 
@@ -1458,6 +1489,9 @@ function parseAndValidateAI(text, modelHint = '') {
 }
 
 function sanitizeItems(arr) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   return arr.reduce((acc, item) => {
     if (!item || typeof item !== 'object') return acc;
 
@@ -1471,13 +1505,26 @@ function sanitizeItems(arr) {
     if (!VALID_SOURCES.has(item.source)) {
       console.warn('[Ondo] AI returned unknown source:', item.source, '→ guessed', resolvedSource);
     }
+
+    // Normalize priority: AI may return 'High' / 'MEDIUM' / etc.
+    const priorityRaw = String(item.priority ?? '').toLowerCase().trim();
+    const priority = VALID_PRIORITY.has(priorityRaw) ? priorityRaw : 'low';
+
+    const dueDate = item.dueDate ? String(item.dueDate).trim().slice(0, 60) : null;
+
+    // Re-compute daysFromNow from the AI's output dueDate so the badge and popup
+    // can distinguish "medium due in 3 days" from "medium due in 6 days", and so
+    // updateBadge correctly counts medium-priority items.
+    const daysFromNow = computeDaysFromNow(dueDate, today);
+
     acc.push({
       title,
-      source:   resolvedSource,
-      dueDate:  item.dueDate ? String(item.dueDate).trim().slice(0, 60) : null,
+      source: resolvedSource,
+      dueDate,
       url,
-      priority: VALID_PRIORITY.has(item.priority) ? item.priority : 'low',
-      notes:    String(item.notes ?? '').trim().slice(0, 300),
+      priority,
+      notes: String(item.notes ?? '').trim().slice(0, 300),
+      ...(daysFromNow !== null ? { daysFromNow } : {}),
     });
     return acc;
   }, []);

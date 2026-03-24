@@ -188,12 +188,6 @@ button {
   flex: 1;
 }
 
-#status-step {
-  font-size: 9px;
-  color: var(--dim);
-  letter-spacing: 0.08em;
-}
-
 /* ── Source bar ──────────────────────────────────────────────────────────────── */
 #source-bar {
   display: flex;
