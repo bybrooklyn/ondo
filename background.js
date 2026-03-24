@@ -176,7 +176,7 @@ const isOnCourse  = url => ['oncourse.cc', 'oncourseconnect.com', 'oncourse.iu.e
 
 // ── Main orchestrator ─────────────────────────────────────────────────────────
 
-const SCAN_TIMEOUT_MS = 120_000; // 2 minutes — hard cap so the popup never hangs forever
+const SCAN_TIMEOUT_MS = 240_000; // 4 minutes — Chrome SW max is ~5 min; Ollama on CPU can be slow
 
 async function handleScrapeAll(sendResponse) {
   // Guard: only one scan at a time
@@ -190,7 +190,7 @@ async function handleScrapeAll(sendResponse) {
   const timeoutId = setTimeout(() => {
     respond({
       success:   false,
-      error:     'Scan timed out after 2 minutes. Your school pages may be loading slowly — try reloading them first.',
+      error:     'Scan timed out after 4 minutes.\n\n• If using Ollama: the model may be slow on CPU — try qwen3:4b if you haven\'t already\n• Try reloading your school pages before scanning\n• Check that Ollama is running: ollama serve',
       errorCode: 'SCAN_TIMEOUT',
     });
   }, SCAN_TIMEOUT_MS);
@@ -378,7 +378,7 @@ async function handleScrapeAll(sendResponse) {
 // ── Tab utilities ─────────────────────────────────────────────────────────────
 
 // Wait for a tab to finish loading (resolves even on timeout)
-function waitForTabLoad(tabId, timeoutMs = 15_000) {
+function waitForTabLoad(tabId, timeoutMs = 25_000) {
   return new Promise(resolve => {
     chrome.tabs.get(tabId, tab => {
       if (chrome.runtime.lastError || tab?.status === 'complete') { resolve(); return; }
