@@ -419,25 +419,34 @@ async function openOrFindTab(matchFn, defaultUrl) {
 }
 
 // Run a self-contained function in a tab's page context and return its result.
+// chrome.scripting.executeScript has no built-in timeout — on discarded/stuck tabs
+// it can hang indefinitely and block the entire Promise.all scan, so we race it.
 async function executeScrapeFn(tabId, fn) {
+  const INJECT_TIMEOUT_MS = 30_000;
+
+  let results;
   try {
-    const results = await chrome.scripting.executeScript({ target: { tabId }, func: fn });
-    if (results?.[0]?.error) {
-      // Scraper threw inside the page context (not an inject permission error)
-      // Log for debugging but treat as empty — not a fatal injection failure
-      console.warn('[Ondo] Scraper threw in page context (0 items):', results[0].error);
-      return [];
-    }
-    const result = results?.[0]?.result;
-    if (!Array.isArray(result)) {
-      console.warn('[Ondo] Scraper returned non-array:', typeof result, '— treating as 0 items');
-      return [];
-    }
-    return result;
+    results = await Promise.race([
+      chrome.scripting.executeScript({ target: { tabId }, func: fn }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('timed out after 30s — tab may be discarded or frozen')), INJECT_TIMEOUT_MS)
+      ),
+    ]);
   } catch (e) {
-    console.error('[Ondo] executeScript inject error:', e.message);
+    console.error('[Ondo] executeScript error:', e.message);
     throw new Error(`Script injection failed: ${e.message}`);
   }
+
+  if (results?.[0]?.error) {
+    console.warn('[Ondo] Scraper threw in page context (0 items):', results[0].error);
+    return [];
+  }
+  const result = results?.[0]?.result;
+  if (!Array.isArray(result)) {
+    console.warn('[Ondo] Scraper returned non-array:', typeof result, '— treating as 0 items');
+    return [];
+  }
+  return result;
 }
 
 // ── Self-contained page scrapers ──────────────────────────────────────────────
@@ -1149,17 +1158,27 @@ async function callOllama(prompt, settings, opts) {
   if (isQwen3)  body.think = false;   // boolean — disables CoT for Qwen3
   if (isGptOss) body.think = 'low';   // string  — gpt-oss uses "low"/"medium"/"high"
 
+  // Ollama on CPU can be very slow — 4 min abort gives it the same budget as our overall timeout
+  const ollamaAbort = new AbortController();
+  const ollamaTimer = setTimeout(() => ollamaAbort.abort(), 240_000);
+
   let res;
   try {
     res = await fetch(`${base}/api/chat`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(body),
+      signal:  ollamaAbort.signal,
     });
   } catch (e) {
+    clearTimeout(ollamaTimer);
+    if (e.name === 'AbortError') {
+      throw new Error(`Ollama timed out after 4 minutes. Try a smaller model (qwen3:4b) or check CPU usage.`);
+    }
     throw ollamaError('OLLAMA_UNREACHABLE',
       `Cannot reach Ollama at ${base}. Is Ollama running?`);
   }
+  clearTimeout(ollamaTimer);
 
   if (res.status === 403) {
     throw ollamaError('OLLAMA_CORS',
@@ -1218,21 +1237,33 @@ async function callClaude(prompt, settings, opts) {
     throw new Error('Claude API key not set. Open Options → add your key.');
   }
 
-  const res = await fetch(CLAUDE_API_URL, {
-    method:  'POST',
-    headers: {
-      'Content-Type':                            'application/json',
-      'x-api-key':                               settings.claudeApiKey,
-      'anthropic-version':                       '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model:      settings.claudeModel || 'claude-haiku-4-5-20251001',
-      max_tokens: 4096,
-      system:     prompt.system,
-      messages:   [{ role: 'user', content: prompt.user }],
-    }),
-  });
+  const claudeAbort = new AbortController();
+  const claudeTimer = setTimeout(() => claudeAbort.abort(), 90_000);
+
+  let res;
+  try {
+    res = await fetch(CLAUDE_API_URL, {
+      method:  'POST',
+      headers: {
+        'Content-Type':                            'application/json',
+        'x-api-key':                               settings.claudeApiKey,
+        'anthropic-version':                       '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model:      settings.claudeModel || 'claude-haiku-4-5-20251001',
+        max_tokens: 4096,
+        system:     prompt.system,
+        messages:   [{ role: 'user', content: prompt.user }],
+      }),
+      signal: claudeAbort.signal,
+    });
+  } catch (e) {
+    clearTimeout(claudeTimer);
+    if (e.name === 'AbortError') throw new Error('Claude request timed out after 90s.');
+    throw e;
+  }
+  clearTimeout(claudeTimer);
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -1271,6 +1302,8 @@ async function callOpenAI(prompt, settings, opts) {
     }),
   };
 
+  const openaiAbort = new AbortController();
+  const openaiTimer = setTimeout(() => openaiAbort.abort(), 90_000);
   let res;
   try {
     res = await fetch(`${base}/chat/completions`, {
@@ -1279,11 +1312,15 @@ async function callOpenAI(prompt, settings, opts) {
         'Content-Type':  'application/json',
         'Authorization': `Bearer ${settings.openaiApiKey}`,
       },
-      body: JSON.stringify(reqBody),
+      body:   JSON.stringify(reqBody),
+      signal: openaiAbort.signal,
     });
   } catch (e) {
+    clearTimeout(openaiTimer);
+    if (e.name === 'AbortError') throw new Error('OpenAI request timed out after 90s.');
     throw new Error(`Cannot reach OpenAI endpoint at ${base}. Check your base URL and network.`);
   }
+  clearTimeout(openaiTimer);
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
